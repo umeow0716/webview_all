@@ -10,11 +10,13 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.view.MotionEvent;
 import android.view.View;
 import android.webkit.DownloadListener;
 import android.webkit.ValueCallback;
@@ -32,6 +34,40 @@ public class WebViewTest {
     final PigeonApiWebView api = new TestProxyApiRegistrar().getPigeonApiWebView();
 
     assertTrue(api.pigeon_defaultConstructor() instanceof WebViewProxyApi.WebViewPlatformView);
+  }
+
+  @Test
+  public void touchDownRequestsNativeFocusForCanvasInputs() {
+    final WebViewProxyApi api = new WebViewProxyApi(new TestProxyApiRegistrar());
+    final WebViewProxyApi.WebViewPlatformView webView =
+        spy(new WebViewProxyApi.WebViewPlatformView(api));
+    final MotionEvent event = mock(MotionEvent.class);
+    when(event.getActionMasked()).thenReturn(MotionEvent.ACTION_DOWN);
+    when(webView.hasFocus()).thenReturn(false);
+
+    webView.onTouchEvent(event);
+
+    verify(webView).requestFocus();
+  }
+
+  @Test
+  public void touchDoesNotRepeatedlyRequestFocus() {
+    final WebViewProxyApi api = new WebViewProxyApi(new TestProxyApiRegistrar());
+    final WebViewProxyApi.WebViewPlatformView webView =
+        spy(new WebViewProxyApi.WebViewPlatformView(api));
+    final MotionEvent event = mock(MotionEvent.class);
+    when(event.getActionMasked()).thenReturn(MotionEvent.ACTION_DOWN);
+    when(webView.hasFocus()).thenReturn(true);
+    webView.onTouchEvent(event);
+
+    when(webView.hasFocus()).thenReturn(false);
+    for (int action :
+        new int[] {MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL}) {
+      when(event.getActionMasked()).thenReturn(action);
+      webView.onTouchEvent(event);
+    }
+
+    verify(webView, never()).requestFocus();
   }
 
   @Test

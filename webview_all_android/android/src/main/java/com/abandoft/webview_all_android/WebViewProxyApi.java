@@ -8,6 +8,7 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.hardware.display.DisplayManager;
 import android.os.Build;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewParent;
 import android.webkit.DownloadListener;
@@ -64,6 +65,16 @@ public class WebViewProxyApi extends PigeonApiWebView {
     @Override
     public View getView() {
       return this;
+    }
+
+    @Override
+    public boolean onTouchEvent(@NonNull MotionEvent event) {
+      // Canvas apps can consume the DOM touch event before Chromium requests native focus.
+      // Acquire it before dispatch so their programmatically focused inputs can reach the IME.
+      if (event.getActionMasked() == MotionEvent.ACTION_DOWN && !hasFocus()) {
+        requestFocus();
+      }
+      return super.onTouchEvent(event);
     }
 
     @Override
