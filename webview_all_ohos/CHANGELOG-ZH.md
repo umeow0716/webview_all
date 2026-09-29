@@ -1,3 +1,9 @@
+## 1.4.3
+
+* 修复 Android 部分 Canvas 网页应用无法唤起软键盘的问题。
+* 改善 Android、OHOS 端的网页与 Flutter 输入框之间的焦点切换。
+* 完善 Windows 网页与 Flutter 控件之间的焦点切换。
+
 ## 1.4.2
 
 * Windows 默认关闭开发者工具的菜单和快捷键入口，可按需开启。

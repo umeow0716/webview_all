@@ -1,3 +1,9 @@
+## 1.4.3
+
+* Fix the soft keyboard not appearing in some Canvas-based web apps on Android.
+* Improve focus switching between WebViews and Flutter text fields on Android and OHOS.
+* Improve focus switching between WebViews and Flutter controls on Windows.
+
 ## 1.4.2
 
 * Disable Windows DevTools menu and keyboard entry points by default; enable them explicitly when needed.
