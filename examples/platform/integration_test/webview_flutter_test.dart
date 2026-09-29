@@ -25,8 +25,11 @@ import 'package:webview_all_windows/src/windows_webview_native.dart'
 import 'package:webview_all_windows/src/windows_webview_types.dart'
     as windows_types;
 
+import 'input_focus_test.dart' show runInputFocusTests;
+
 Future<void> main() async {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  runInputFocusTests();
 
   final HttpServer server = await HttpServer.bind(
     InternetAddress.loopbackIPv4,
