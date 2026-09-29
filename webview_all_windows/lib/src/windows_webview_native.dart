@@ -113,6 +113,11 @@ PointerButton getButton(int value) {
 
 final WindowsWebViewHostApi _hostApi = WindowsWebViewHostApi();
 
+enum _FocusEvent { gained, lost, next, previous }
+
+// Matches COREWEBVIEW2_MOVE_FOCUS_REASON.
+enum _FocusReason { programmatic, next, previous }
+
 class WebviewValue {
   const WebviewValue({required this.isInitialized});
 
@@ -191,6 +196,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   bool _nativeWebViewCreated = false;
   bool _methodCallHandlerRegistered = false;
   bool _streamsClosed = false;
+  final _focusEvents = StreamController<_FocusEvent>.broadcast();
   int _surfaceAttachmentCount = 0;
   int _surfaceAttachmentGeneration = 0;
   final ValueNotifier<Object?> _renderingError = ValueNotifier<Object?>(null);
@@ -391,6 +397,16 @@ class WebviewController extends ValueNotifier<WebviewValue> {
             break;
           case 'cursorChanged':
             _cursorStreamController.add(getCursorByName(map['value']));
+            break;
+          case 'focusChanged':
+            _focusEvents.add(
+              map['value'] == true ? _FocusEvent.gained : _FocusEvent.lost,
+            );
+            break;
+          case 'moveFocusRequested':
+            _focusEvents.add(
+              map['value'] == true ? _FocusEvent.previous : _FocusEvent.next,
+            );
             break;
           case 'webMessageReceived':
             try {
@@ -664,6 +680,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     unawaited(_securityStateChangedStreamController.close());
     unawaited(_titleStreamController.close());
     unawaited(_cursorStreamController.close());
+    unawaited(_focusEvents.close());
     unawaited(_webMessageStreamController.close());
     unawaited(_containsFullScreenElementChangedStreamController.close());
   }
@@ -1159,6 +1176,24 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     return _hostApi.setFpsLimit(_textureId, maxFps ?? 0);
   }
 
+  Future<void> _setFocus(
+    bool focused, [
+    _FocusReason reason = _FocusReason.programmatic,
+  ]) async {
+    if (_isDisposed || !value.isInitialized) {
+      return;
+    }
+    try {
+      await _hostApi.setFocus(_textureId, focused, reason.index);
+    } catch (error) {
+      if (!_isDisposed) {
+        debugPrint(
+          'webview_all_windows: failed to update input focus: ${_singleLineNativeLogValue(error)}',
+        );
+      }
+    }
+  }
+
   /// Sends a Pointer (Touch) update
   Future<void> _setPointerUpdate(
     WebviewPointerEventKind kind,
@@ -1323,6 +1358,10 @@ class Webview extends StatefulWidget {
 
 class _WebviewState extends State<Webview> with WidgetsBindingObserver {
   final GlobalKey _key = GlobalKey();
+  final FocusNode _focusNode = FocusNode(
+    debugLabel: 'Windows WebView',
+    canRequestFocus: false,
+  );
   final _downButtons = <int, PointerButton>{};
 
   PointerDeviceKind _pointerKind = PointerDeviceKind.unknown;
@@ -1332,6 +1371,8 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
   WebviewController get _controller => widget.controller;
 
   StreamSubscription? _cursorSubscription;
+  StreamSubscription<_FocusEvent>? _focusSubscription;
+  bool _nativeFocused = false;
   int _surfaceSizeGeneration = 0;
   bool _applicationVisible = true;
   bool _surfacePainted = false;
@@ -1348,6 +1389,7 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
       WidgetsBinding.instance.lifecycleState,
     );
     _subscribeToCursor();
+    _subscribeToFocus();
     _controller._renderingError.addListener(_handleRenderingErrorChanged);
     _scheduleSurfaceSizeReport();
     _scheduleVisibilityCheck();
@@ -1355,6 +1397,7 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
 
   void _handleRenderingErrorChanged() {
     if (mounted) {
+      _syncSurfaceAttachment();
       setState(() {});
     }
   }
@@ -1371,12 +1414,88 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
     });
   }
 
+  void _handleFocusChanged(bool focused) {
+    // Moving into a native child clears Flutter's view focus. That is not a
+    // request to return keyboard input to Flutter.
+    if (!focused &&
+        FocusManager.instance.primaryFocus == FocusManager.instance.rootScope) {
+      return;
+    }
+    if (focused && _nativeFocused) {
+      return;
+    }
+    if (!focused) {
+      _nativeFocused = false;
+    }
+    final keys = HardwareKeyboard.instance.logicalKeysPressed;
+    final reason = keys.contains(LogicalKeyboardKey.tab)
+        ? (HardwareKeyboard.instance.isShiftPressed
+              ? _FocusReason.previous
+              : _FocusReason.next)
+        : _FocusReason.programmatic;
+    unawaited(_controller._setFocus(focused, reason));
+  }
+
+  void _subscribeToFocus() {
+    _focusSubscription = _controller._focusEvents.stream.listen((event) {
+      if (event == _FocusEvent.lost) {
+        _nativeFocused = false;
+      }
+      if (!mounted || !_focusNode.canRequestFocus) {
+        return;
+      }
+      switch (event) {
+        case _FocusEvent.gained:
+          _nativeFocused = true;
+          // A focused native child parks Flutter focus at the root scope.
+          // Requesting Flutter focus there would steal it back from WebView2.
+          if (FocusManager.instance.primaryFocus !=
+              FocusManager.instance.rootScope) {
+            _focusNode.requestFocus();
+          }
+        case _FocusEvent.lost:
+          // Keep Flutter focus across native dialogs and application deactivation.
+          break;
+        case _FocusEvent.next:
+        case _FocusEvent.previous:
+          if (!_focusNode.hasFocus && !_nativeFocused) {
+            return;
+          }
+          _focusNode.requestFocus();
+          FocusManager.instance.applyFocusChangesIfNeeded();
+          if (event == _FocusEvent.previous) {
+            _focusNode.previousFocus();
+          } else {
+            _focusNode.nextFocus();
+          }
+          scheduleMicrotask(() {
+            // When this is the only focusable control, traversal wraps back to it.
+            if (mounted && _focusNode.hasFocus) {
+              unawaited(
+                _controller._setFocus(
+                  true,
+                  event == _FocusEvent.previous
+                      ? _FocusReason.previous
+                      : _FocusReason.next,
+                ),
+              );
+            }
+          });
+      }
+    });
+  }
+
   @override
   void didUpdateWidget(Webview oldWidget) {
     super.didUpdateWidget(oldWidget);
     final bool controllerChanged = oldWidget.controller != widget.controller;
 
     if (controllerChanged) {
+      _nativeFocused = false;
+      unawaited(oldWidget.controller._setFocus(false));
+      _focusNode.unfocus();
+      unawaited(_focusSubscription?.cancel());
+      _subscribeToFocus();
       oldWidget.controller._renderingError.removeListener(
         _handleRenderingErrorChanged,
       );
@@ -1439,7 +1558,15 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
   }
 
   void _syncSurfaceAttachment() {
-    final bool shouldAttach = _surfacePainted && _applicationVisible;
+    final bool shouldAttach =
+        _surfacePainted &&
+        _applicationVisible &&
+        _controller._renderingError.value == null;
+    _focusNode.canRequestFocus =
+        shouldAttach && _controller.value.isInitialized;
+    if (!shouldAttach) {
+      _nativeFocused = false;
+    }
     if (_surfaceAttached == shouldAttach) {
       return;
     }
@@ -1507,101 +1634,105 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
         ),
       );
     }
-    return NotificationListener<SizeChangedLayoutNotification>(
-      onNotification: (notification) {
-        _scheduleSurfaceSizeReport();
-        return true;
-      },
-      child: SizeChangedLayoutNotifier(
-        child: _controller.value.isInitialized
-            ? Listener(
-                onPointerHover: (ev) {
-                  // ev.kind is for whatever reason not set to touch
-                  // even on touch input
-                  if (_pointerKind == PointerDeviceKind.touch) {
-                    // Ignoring hover events on touch for now
-                    return;
-                  }
-                  _controller._setCursorPos(ev.localPosition);
-                },
-                onPointerDown: (ev) {
-                  _pointerKind = ev.kind;
-                  if (ev.kind == PointerDeviceKind.touch) {
-                    _controller._setPointerUpdate(
-                      WebviewPointerEventKind.down,
-                      ev.pointer,
-                      ev.localPosition,
-                      ev.size,
-                      ev.pressure,
-                    );
-                    return;
-                  }
-                  final button = getButton(ev.buttons);
-                  _downButtons[ev.pointer] = button;
-                  _controller._setPointerButtonState(button, true);
-                },
-                onPointerUp: (ev) {
-                  _pointerKind = ev.kind;
-                  if (ev.kind == PointerDeviceKind.touch) {
-                    _controller._setPointerUpdate(
-                      WebviewPointerEventKind.up,
-                      ev.pointer,
-                      ev.localPosition,
-                      ev.size,
-                      ev.pressure,
-                    );
-                    return;
-                  }
-                  final button = _downButtons.remove(ev.pointer);
-                  if (button != null) {
-                    _controller._setPointerButtonState(button, false);
-                  }
-                },
-                onPointerCancel: (ev) {
-                  _pointerKind = ev.kind;
-                  final button = _downButtons.remove(ev.pointer);
-                  if (button != null) {
-                    _controller._setPointerButtonState(button, false);
-                  }
-                },
-                onPointerMove: (ev) {
-                  _pointerKind = ev.kind;
-                  if (ev.kind == PointerDeviceKind.touch) {
-                    _controller._setPointerUpdate(
-                      WebviewPointerEventKind.update,
-                      ev.pointer,
-                      ev.localPosition,
-                      ev.size,
-                      ev.pressure,
-                    );
-                  } else {
+    return Focus.withExternalFocusNode(
+      focusNode: _focusNode,
+      onFocusChange: _handleFocusChanged,
+      child: NotificationListener<SizeChangedLayoutNotification>(
+        onNotification: (notification) {
+          _scheduleSurfaceSizeReport();
+          return true;
+        },
+        child: SizeChangedLayoutNotifier(
+          child: _controller.value.isInitialized
+              ? Listener(
+                  onPointerHover: (ev) {
+                    // ev.kind is for whatever reason not set to touch
+                    // even on touch input
+                    if (_pointerKind == PointerDeviceKind.touch) {
+                      // Ignoring hover events on touch for now
+                      return;
+                    }
                     _controller._setCursorPos(ev.localPosition);
-                  }
-                },
-                onPointerSignal: (signal) {
-                  if (signal is PointerScrollEvent) {
-                    _controller._setScrollDelta(
-                      -signal.scrollDelta.dx,
-                      -signal.scrollDelta.dy,
-                    );
-                  }
-                },
-                onPointerPanZoomUpdate: (signal) {
-                  if (signal.panDelta.dx.abs() > signal.panDelta.dy.abs()) {
-                    _controller._setScrollDelta(-signal.panDelta.dx, 0);
-                  } else {
-                    _controller._setScrollDelta(0, signal.panDelta.dy);
-                  }
-                },
-                child: MouseRegion(
-                  cursor: _cursor,
-                  child: Texture(
-                    textureId: _controller._textureId,
-                    filterQuality: widget.filterQuality,
+                  },
+                  onPointerDown: (ev) {
+                    _pointerKind = ev.kind;
+                    if (ev.kind == PointerDeviceKind.touch) {
+                      _controller._setPointerUpdate(
+                        WebviewPointerEventKind.down,
+                        ev.pointer,
+                        ev.localPosition,
+                        ev.size,
+                        ev.pressure,
+                      );
+                      return;
+                    }
+                    final button = getButton(ev.buttons);
+                    _downButtons[ev.pointer] = button;
+                    _controller._setPointerButtonState(button, true);
+                  },
+                  onPointerUp: (ev) {
+                    _pointerKind = ev.kind;
+                    if (ev.kind == PointerDeviceKind.touch) {
+                      _controller._setPointerUpdate(
+                        WebviewPointerEventKind.up,
+                        ev.pointer,
+                        ev.localPosition,
+                        ev.size,
+                        ev.pressure,
+                      );
+                      return;
+                    }
+                    final button = _downButtons.remove(ev.pointer);
+                    if (button != null) {
+                      _controller._setPointerButtonState(button, false);
+                    }
+                  },
+                  onPointerCancel: (ev) {
+                    _pointerKind = ev.kind;
+                    final button = _downButtons.remove(ev.pointer);
+                    if (button != null) {
+                      _controller._setPointerButtonState(button, false);
+                    }
+                  },
+                  onPointerMove: (ev) {
+                    _pointerKind = ev.kind;
+                    if (ev.kind == PointerDeviceKind.touch) {
+                      _controller._setPointerUpdate(
+                        WebviewPointerEventKind.update,
+                        ev.pointer,
+                        ev.localPosition,
+                        ev.size,
+                        ev.pressure,
+                      );
+                    } else {
+                      _controller._setCursorPos(ev.localPosition);
+                    }
+                  },
+                  onPointerSignal: (signal) {
+                    if (signal is PointerScrollEvent) {
+                      _controller._setScrollDelta(
+                        -signal.scrollDelta.dx,
+                        -signal.scrollDelta.dy,
+                      );
+                    }
+                  },
+                  onPointerPanZoomUpdate: (signal) {
+                    if (signal.panDelta.dx.abs() > signal.panDelta.dy.abs()) {
+                      _controller._setScrollDelta(-signal.panDelta.dx, 0);
+                    } else {
+                      _controller._setScrollDelta(0, signal.panDelta.dy);
+                    }
+                  },
+                  child: MouseRegion(
+                    cursor: _cursor,
+                    child: Texture(
+                      textureId: _controller._textureId,
+                      filterQuality: widget.filterQuality,
+                    ),
                   ),
-                ),
-              )
-            : const SizedBox(),
+                )
+              : const SizedBox(),
+        ),
       ),
     );
   }
@@ -1661,6 +1792,11 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (_focusNode.hasFocus) {
+      unawaited(_controller._setFocus(false));
+    }
+    unawaited(_focusSubscription?.cancel());
+    _focusNode.dispose();
     _surfaceSizeReportScheduled = false;
     _surfaceSizeGeneration += 1;
     if (_surfaceAttached) {

@@ -44,6 +44,187 @@ void main() {
     expect(WebViewPlatform.instance, isA<WindowsWebViewPlatform>());
   });
 
+  _widgetTest('synchronizes native focus without refocusing the page', (
+    tester,
+  ) async {
+    final requests = <(bool, int)>[];
+    _mockWindowsWebViewCreation(
+      onSetFocus: (focused, reason) => requests.add((focused, reason)),
+    );
+    final controller = _createNativeController();
+    await controller.initialize();
+    final inputFocus = FocusNode();
+    addTearDown(inputFocus.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: <Widget>[
+              TextField(focusNode: inputFocus, autofocus: true),
+              Expanded(child: native_webview.Webview(controller)),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(inputFocus.hasFocus, isTrue);
+    requests.clear();
+
+    await _emitWindowsWebViewEvent(<String, Object?>{
+      'type': 'focusChanged',
+      'value': true,
+    });
+    await tester.pump();
+    expect(inputFocus.hasFocus, isFalse);
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'Windows WebView');
+    expect(requests, isEmpty);
+
+    inputFocus.requestFocus();
+    await tester.pump();
+    expect(requests, <(bool, int)>[(false, 0)]);
+  });
+
+  for (final bool backwards in <bool>[false, true]) {
+    _widgetTest(
+      'traverses between Flutter and WebView (backwards: $backwards)',
+      (tester) async {
+        final requests = <(bool, int)>[];
+        _mockWindowsWebViewCreation(
+          onSetFocus: (focused, reason) => requests.add((focused, reason)),
+        );
+        final controller = _createNativeController();
+        await controller.initialize();
+        final before = FocusNode();
+        final after = FocusNode();
+        addTearDown(before.dispose);
+        addTearDown(after.dispose);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Column(
+                children: <Widget>[
+                  TextField(focusNode: before, autofocus: !backwards),
+                  Expanded(child: native_webview.Webview(controller)),
+                  TextField(focusNode: after, autofocus: backwards),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        if (backwards) {
+          await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+        }
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.tab);
+        await tester.pump();
+        expect(
+          FocusManager.instance.primaryFocus?.debugLabel,
+          'Windows WebView',
+        );
+        expect(requests.last, (true, backwards ? 2 : 1));
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.tab);
+        if (backwards) {
+          await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+        }
+        // Windows parks Flutter focus while a native child owns keyboard input.
+        FocusManager.instance.rootScope.requestScopeFocus();
+        await tester.pump();
+        final requestCount = requests.length;
+        await _emitWindowsWebViewEvent(<String, Object?>{
+          'type': 'focusChanged',
+          'value': true,
+        });
+        await tester.pump();
+        expect(
+          FocusManager.instance.primaryFocus,
+          FocusManager.instance.rootScope,
+        );
+        expect(requests, hasLength(requestCount));
+
+        await _emitWindowsWebViewEvent(<String, Object?>{
+          'type': 'moveFocusRequested',
+          'value': backwards,
+        });
+        await tester.pump();
+        expect((backwards ? before : after).hasFocus, isTrue);
+        expect(requests.last, (false, 0));
+      },
+    );
+  }
+
+  _widgetTest(
+    'hidden WebViews release focus and ignore delayed native focus events',
+    (tester) async {
+      final requests = <(bool, int)>[];
+      _mockWindowsWebViewCreation(
+        onSetFocus: (focused, reason) => requests.add((focused, reason)),
+      );
+      final controller = _createNativeController();
+      await controller.initialize();
+      final visible = ValueNotifier<bool>(true);
+      addTearDown(visible.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ValueListenableBuilder<bool>(
+            valueListenable: visible,
+            builder: (context, value, child) =>
+                Offstage(offstage: !value, child: child),
+            child: native_webview.Webview(controller),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _emitWindowsWebViewEvent(<String, Object?>{
+        'type': 'focusChanged',
+        'value': true,
+      });
+      await tester.pump();
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'Windows WebView');
+
+      visible.value = false;
+      await tester.pumpAndSettle();
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        isNot('Windows WebView'),
+      );
+      expect(requests.last.$1, isFalse);
+      await _emitWindowsWebViewEvent(<String, Object?>{
+        'type': 'focusChanged',
+        'value': true,
+      });
+      await tester.pump();
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        isNot('Windows WebView'),
+      );
+      visible.value = true;
+      await tester.pumpAndSettle();
+      expect(
+        FocusManager.instance.primaryFocus?.debugLabel,
+        isNot('Windows WebView'),
+      );
+      requests.clear();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.tab);
+      await tester.pump();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.tab);
+      expect(requests, <(bool, int)>[(true, 1)]);
+
+      requests.clear();
+      await _emitWindowsWebViewEvent(<String, Object?>{
+        'type': 'focusChanged',
+        'value': true,
+      });
+      await _emitWindowsWebViewEvent(<String, Object?>{
+        'type': 'moveFocusRequested',
+        'value': false,
+      });
+      await tester.pump();
+      // With no other focusable controls, Tab wraps inside this WebView.
+      expect(requests, <(bool, int)>[(true, 1)]);
+    },
+  );
+
   test('creates Windows platform implementation objects', () {
     final platform = WindowsWebViewPlatform();
     final controller = platform.createPlatformWebViewController(
@@ -2393,6 +2574,7 @@ void _mockWindowsWebViewCreation({
   void Function(WindowsSizeData size)? onSetSize,
   int setSizeFailureCount = 0,
   void Function(bool attached)? onSetSurfaceAttached,
+  void Function(bool focused, int reason)? onSetFocus,
   void Function()? onDisposeWebView,
   void Function({
     required bool alert,
@@ -2652,6 +2834,13 @@ void _mockWindowsWebViewCreation({
     onDisposeWebView?.call();
     return _encodePigeonSuccess();
   });
+  messenger.setMockMessageHandler(_hostApiChannel('setFocus'), (
+    ByteData? message,
+  ) async {
+    final args = _decodePigeonArgs(message);
+    onSetFocus?.call(args[1]! as bool, args[2]! as int);
+    return _encodePigeonSuccess();
+  });
 
   messenger.setMockMethodCallHandler(
     MethodChannel('$windowsWebViewChannelPrefix/$_activeMockTextureId/events'),
@@ -2728,6 +2917,7 @@ void _clearWindowsWebViewCreationMock() {
   );
   messenger.setMockMessageHandler(_hostApiChannel('setSize'), null);
   messenger.setMockMessageHandler(_hostApiChannel('setSurfaceAttached'), null);
+  messenger.setMockMessageHandler(_hostApiChannel('setFocus'), null);
   messenger.setMockMessageHandler(_hostApiChannel('disposeWebView'), null);
   messenger.setMockMethodCallHandler(
     MethodChannel('$windowsWebViewChannelPrefix/$_activeMockTextureId/events'),
