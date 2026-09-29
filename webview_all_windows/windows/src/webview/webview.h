@@ -145,6 +145,7 @@ struct EventRegistrations {
   EventRegistrationToken cursor_changed_token_{};
   EventRegistrationToken got_focus_token_{};
   EventRegistrationToken lost_focus_token_{};
+  EventRegistrationToken move_focus_requested_token_{};
   EventRegistrationToken web_message_received_token_{};
   EventRegistrationToken web_resource_response_received_token_{};
   EventRegistrationToken basic_authentication_requested_token_{};
@@ -173,6 +174,7 @@ public:
   typedef std::function<void(const std::string &)> DocumentTitleChangedCallback;
   typedef std::function<void(const HCURSOR)> CursorChangedCallback;
   typedef std::function<void(bool)> FocusChangedCallback;
+  typedef std::function<bool(bool)> MoveFocusRequestedCallback;
   typedef std::function<void(bool, const std::string &)>
       AddScriptToExecuteOnDocumentCreatedCallback;
   typedef std::function<void(bool, const std::string &)> ScriptExecutedCallback;
@@ -225,6 +227,7 @@ public:
 
   HRESULT SetSurfaceSize(size_t width, size_t height, float scale_factor);
   HRESULT SetVisible(bool visible);
+  HRESULT SetFocus(bool focused, COREWEBVIEW2_MOVE_FOCUS_REASON reason);
   void NotifyParentWindowPositionChanged();
   void SetCursorPos(double x, double y);
   void SetPointerUpdate(int32_t pointer, WebviewPointerEventKind eventKind,
@@ -320,6 +323,10 @@ public:
     focus_changed_callback_ = std::move(callback);
   }
 
+  void OnMoveFocusRequested(MoveFocusRequestedCallback callback) {
+    move_focus_requested_callback_ = std::move(callback);
+  }
+
   void OnWebMessageReceived(WebMessageReceivedCallback callback) {
     web_message_received_callback_ = std::move(callback);
   }
@@ -405,6 +412,8 @@ private:
   DocumentTitleChangedCallback document_title_changed_callback_;
   CursorChangedCallback cursor_changed_callback_;
   FocusChangedCallback focus_changed_callback_;
+  MoveFocusRequestedCallback move_focus_requested_callback_;
+  bool has_focus_ = false;
   WebMessageReceivedCallback web_message_received_callback_;
   PermissionRequestedCallback permission_requested_callback_;
   NavigationRequestedCallback navigation_requested_callback_;

@@ -1778,4 +1778,24 @@ class WindowsWebViewHostApi {
       isNullValid: true,
     );
   }
+
+  Future<void> setFocus(int textureId, bool focused, int reason) async {
+    final pigeonVar_channelName =
+        'com.abandoft.pigeon.webview_all_windows.WindowsWebViewHostApi.setFocus$pigeonVar_messageChannelSuffix';
+    final pigeonVar_channel = BasicMessageChannel<Object?>(
+      pigeonVar_channelName,
+      pigeonChannelCodec,
+      binaryMessenger: pigeonVar_binaryMessenger,
+    );
+    final Future<Object?> pigeonVar_sendFuture = pigeonVar_channel.send(
+      <Object?>[textureId, focused, reason],
+    );
+    final pigeonVar_replyList = await pigeonVar_sendFuture as List<Object?>?;
+
+    _extractReplyValueOrThrow(
+      pigeonVar_replyList,
+      pigeonVar_channelName,
+      isNullValid: true,
+    );
+  }
 }

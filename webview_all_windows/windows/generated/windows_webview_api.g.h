@@ -563,6 +563,8 @@ public:
                                               const WindowsSizeData &size) = 0;
   virtual std::optional<FlutterError> SetSurfaceAttached(int64_t texture_id,
                                                          bool attached) = 0;
+  virtual std::optional<FlutterError> SetFocus(int64_t texture_id, bool focused,
+                                               int64_t reason) = 0;
 
   // The codec used by WindowsWebViewHostApi.
   static const ::flutter::StandardMessageCodec &GetCodec();

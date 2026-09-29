@@ -316,6 +316,27 @@ void WebviewBridge::RegisterEventHandlers() {
     EmitEvent(event);
   });
 
+  webview_->OnFocusChanged([this](bool focused) {
+    EmitEvent(flutter::EncodableValue(flutter::EncodableMap{
+        {flutter::EncodableValue(kEventType),
+         flutter::EncodableValue("focusChanged")},
+        {flutter::EncodableValue(kEventValue),
+         flutter::EncodableValue(focused)},
+    }));
+  });
+  webview_->OnMoveFocusRequested([this](bool previous) {
+    if (!event_sink_ || !surface_attached_) {
+      return false;
+    }
+    EmitEvent(flutter::EncodableValue(flutter::EncodableMap{
+        {flutter::EncodableValue(kEventType),
+         flutter::EncodableValue("moveFocusRequested")},
+        {flutter::EncodableValue(kEventValue),
+         flutter::EncodableValue(previous)},
+    }));
+    return true;
+  });
+
   webview_->OnPermissionRequested(
       [this](const std::string &url, WebviewPermissionKind kind,
              bool is_user_initiated,
@@ -617,6 +638,18 @@ WebviewBridge::SetSurfaceAttached(bool attached) {
 
 void WebviewBridge::NotifyParentWindowPositionChanged() {
   webview_->NotifyParentWindowPositionChanged();
+}
+
+HRESULT WebviewBridge::SetFocus(bool focused, int64_t reason) {
+  if (reason < COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC ||
+      reason > COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS) {
+    return E_INVALIDARG;
+  }
+  if (focused && (!surface_attached_ || suspended_)) {
+    return S_FALSE;
+  }
+  return webview_->SetFocus(
+      focused, static_cast<COREWEBVIEW2_MOVE_FOCUS_REASON>(reason));
 }
 
 std::optional<WindowsRenderingError> WebviewBridge::UpdateRenderingState() {

@@ -1140,6 +1140,18 @@ WindowsHostApi::SetSurfaceAttached(int64_t texture_id, bool attached) {
   return std::nullopt;
 }
 
+std::optional<FlutterError>
+WindowsHostApi::SetFocus(int64_t texture_id, bool focused, int64_t reason) {
+  auto bridge = FindBridge(texture_id);
+  if (!bridge) {
+    return InvalidIdError();
+  }
+  if (FAILED(bridge->SetFocus(focused, reason))) {
+    return MethodFailedError("Updating the WebView focus failed.");
+  }
+  return std::nullopt;
+}
+
 std::optional<FlutterError> WindowsHostApi::EnsureWinrtRuntime() {
   if (runtime_ && runtime_->available()) {
     return std::nullopt;

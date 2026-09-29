@@ -257,6 +257,7 @@ Webview::~Webview() {
   download_event_callback_ = nullptr;
 
   if (webview_controller_) {
+    SetFocus(false, COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
     webview_controller_->put_IsVisible(FALSE);
   }
   if (composition_controller_) {
@@ -593,6 +594,7 @@ void Webview::RegisterEventHandlers() {
   webview_controller_->add_GotFocus(
       Callback<ICoreWebView2FocusChangedEventHandler>(
           [this](ICoreWebView2Controller *sender, IUnknown *args) -> HRESULT {
+            has_focus_ = true;
             if (focus_changed_callback_) {
               focus_changed_callback_(true);
             }
@@ -604,6 +606,7 @@ void Webview::RegisterEventHandlers() {
   webview_controller_->add_LostFocus(
       Callback<ICoreWebView2FocusChangedEventHandler>(
           [this](ICoreWebView2Controller *sender, IUnknown *args) -> HRESULT {
+            has_focus_ = false;
             if (focus_changed_callback_) {
               focus_changed_callback_(false);
             }
@@ -611,6 +614,22 @@ void Webview::RegisterEventHandlers() {
           })
           .Get(),
       &event_registrations_.lost_focus_token_);
+
+  webview_controller_->add_MoveFocusRequested(
+      Callback<ICoreWebView2MoveFocusRequestedEventHandler>(
+          [this](ICoreWebView2Controller *,
+                 ICoreWebView2MoveFocusRequestedEventArgs *args) -> HRESULT {
+            COREWEBVIEW2_MOVE_FOCUS_REASON reason;
+            if (move_focus_requested_callback_ &&
+                SUCCEEDED(args->get_Reason(&reason)) &&
+                move_focus_requested_callback_(
+                    reason == COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS)) {
+              return args->put_Handled(TRUE);
+            }
+            return S_OK;
+          })
+          .Get(),
+      &event_registrations_.move_focus_requested_token_);
 
   webview_->add_WebMessageReceived(
       Callback<ICoreWebView2WebMessageReceivedEventHandler>(
@@ -1057,7 +1076,34 @@ HRESULT Webview::SetVisible(bool visible) {
   if (!IsValid() || !webview_controller_) {
     return E_UNEXPECTED;
   }
+  if (!visible) {
+    SetFocus(false, COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+  }
   return webview_controller_->put_IsVisible(visible ? TRUE : FALSE);
+}
+
+HRESULT Webview::SetFocus(bool focused, COREWEBVIEW2_MOVE_FOCUS_REASON reason) {
+  if (!IsValid()) {
+    return E_UNEXPECTED;
+  }
+  if (!focused) {
+    // Do not take focus away from another WebView or an external window.
+    if (has_focus_ && IsChild(parent_window_, ::GetFocus()) &&
+        GetAncestor(parent_window_, GA_ROOT) == GetForegroundWindow()) {
+      ::SetFocus(parent_window_);
+    }
+    return S_OK;
+  }
+  if (has_focus_ && reason == COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC) {
+    return S_OK;
+  }
+  BOOL visible = FALSE;
+  if (FAILED(webview_controller_->get_IsVisible(&visible)) || !visible ||
+      !IsWindowVisible(parent_window_) ||
+      GetAncestor(parent_window_, GA_ROOT) != GetForegroundWindow()) {
+    return S_FALSE;
+  }
+  return webview_controller_->MoveFocus(reason);
 }
 
 void Webview::NotifyParentWindowPositionChanged() {
@@ -1517,6 +1563,7 @@ void Webview::SetPointerUpdate(int32_t pointer,
     event = COREWEBVIEW2_POINTER_EVENT_KIND_ACTIVATE;
     break;
   case WebviewPointerEventKind::Down:
+    SetFocus(true, COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
     event = COREWEBVIEW2_POINTER_EVENT_KIND_DOWN;
     pointerFlags =
         POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
@@ -1572,6 +1619,10 @@ void Webview::SetPointerUpdate(int32_t pointer,
 void Webview::SetPointerButtonState(WebviewPointerButton button, bool is_down) {
   if (!IsValid()) {
     return;
+  }
+
+  if (is_down) {
+    SetFocus(true, COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
   }
 
   COREWEBVIEW2_MOUSE_EVENT_KIND kind;

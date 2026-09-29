@@ -249,4 +249,6 @@ abstract class WindowsWebViewHostApi {
   void setSize(int textureId, WindowsSizeData size);
 
   void setSurfaceAttached(int textureId, bool attached);
+
+  void setFocus(int textureId, bool focused, int reason);
 }

@@ -41,6 +41,7 @@ public:
   std::optional<WindowsRenderingError> SetSize(double width, double height,
                                                double scale_factor);
   std::optional<WindowsRenderingError> SetSurfaceAttached(bool attached);
+  HRESULT SetFocus(bool focused, int64_t reason);
   void NotifyParentWindowPositionChanged();
 
   void LoadUrl(const std::string &url);
