@@ -55,11 +55,43 @@ void main() {
       isA<LinuxWebViewCookieManager>(),
     );
     expect(
+      platform.createPlatformProxyController(
+        const PlatformProxyControllerCreationParams(),
+      ),
+      isA<LinuxProxyController>(),
+    );
+    expect(
       platform.createPlatformWebViewDataManager(
         const PlatformWebViewDataManagerCreationParams(),
       ),
       isA<LinuxWebViewDataManager>(),
     );
+  });
+
+  test('forwards proxy override settings to the root channel', () async {
+    final List<MethodCall> calls = <MethodCall>[];
+    _mockLinuxWebViewCreation(onRootCall: calls.add);
+    final LinuxProxyController controller = LinuxProxyController.instance();
+
+    await controller.setProxyOverride(
+      settings: const ProxySettings(
+        bypassRules: <String>['localhost', '127.0.0.1'],
+        proxyRules: <ProxyRule>[
+          ProxyRule(url: 'http://127.0.0.1:8888'),
+        ],
+      ),
+    );
+    await controller.clearProxyOverride();
+
+    expect(calls, hasLength(2));
+    expect(calls[0].method, 'setProxyOverride');
+    expect(calls[0].arguments, <String, Object?>{
+      'bypassRules': <String>['localhost', '127.0.0.1'],
+      'proxyRules': <Map<String, Object?>>[
+        <String, Object?>{'schemeFilter': null, 'url': 'http://127.0.0.1:8888'},
+      ],
+    });
+    expect(calls[1].method, 'clearProxyOverride');
   });
 
   testWidgets('moves the native view when the controller changes', (

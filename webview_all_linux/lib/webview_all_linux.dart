@@ -1,4 +1,5 @@
 export 'src/linux_navigation_delegate.dart';
+export 'src/linux_proxy_controller.dart';
 export 'src/linux_webview_controller.dart';
 export 'src/linux_webview_cookie_manager.dart';
 export 'src/linux_webview_data_manager.dart';

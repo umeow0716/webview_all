@@ -55,6 +55,22 @@ void main() {
       );
 
       expect(
+        () => PlatformProxyController(
+          const PlatformProxyControllerCreationParams(),
+        ),
+        throwsA(
+          isA<AssertionError>().having(
+            (AssertionError error) => error.message,
+            'message',
+            'A platform implementation for `webview_all` has not been set. Please '
+                'ensure that an implementation of `WebViewPlatform` has been set to '
+                '`WebViewPlatform.instance` before use. For unit testing, '
+                '`WebViewPlatform.instance` can be set with your own test implementation.',
+          ),
+        ),
+      );
+
+      expect(
         () => PlatformWebViewCookieManager(
           const PlatformWebViewCookieManagerCreationParams(),
         ),
@@ -174,6 +190,20 @@ void main() {
       expect(
         () => webViewPlatform.createPlatformWebViewWidget(
           PlatformWebViewWidgetCreationParams(controller: controller),
+        ),
+        throwsUnimplementedError,
+      );
+    },
+  );
+
+  test(
+    'Default implementation of createPlatformProxyController throws',
+    () {
+      final WebViewPlatform webViewPlatform = ExtendsWebViewPlatform();
+
+      expect(
+        () => webViewPlatform.createPlatformProxyController(
+          const PlatformProxyControllerCreationParams(),
         ),
         throwsUnimplementedError,
       );

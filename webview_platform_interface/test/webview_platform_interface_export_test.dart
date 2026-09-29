@@ -22,11 +22,16 @@ void main() {
       main_file.NavigationRequestCallback;
       main_file.PageEventCallback;
       main_file.PlatformNavigationDelegateCreationParams;
+      main_file.PlatformProxyController;
+      main_file.PlatformProxyControllerCreationParams;
       main_file.PlatformWebViewControllerCreationParams;
       main_file.PlatformWebViewCookieManagerCreationParams;
       main_file.PlatformWebViewPermissionRequest;
       main_file.PlatformWebViewWidgetCreationParams;
       main_file.ProgressCallback;
+      main_file.ProxyRule;
+      main_file.ProxySchemeFilter;
+      main_file.ProxySettings;
       main_file.WebViewPermissionResourceType;
       main_file.WebResourceRequest;
       main_file.WebResourceResponse;

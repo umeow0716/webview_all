@@ -18,12 +18,17 @@ export 'package:webview_platform_interface/webview_platform_interface.dart'
         NavigationRequestCallback,
         PageEventCallback,
         PlatformNavigationDelegateCreationParams,
+        PlatformProxyController,
+        PlatformProxyControllerCreationParams,
         PlatformWebViewControllerCreationParams,
         PlatformWebViewCookieManagerCreationParams,
         PlatformWebViewDataManagerCreationParams,
         PlatformWebViewPermissionRequest,
         PlatformWebViewWidgetCreationParams,
         ProgressCallback,
+        ProxyRule,
+        ProxySchemeFilter,
+        ProxySettings,
         ScrollPositionChange,
         UrlChange,
         WebResourceError,
@@ -43,6 +48,7 @@ export 'package:webview_platform_interface/webview_platform_interface.dart'
         X509Certificate;
 
 export 'src/navigation_delegate.dart';
+export 'src/proxy_controller.dart';
 export 'src/offscreen_webview_session.dart';
 export 'src/webview_controller.dart';
 export 'src/webview_cookie_manager.dart';

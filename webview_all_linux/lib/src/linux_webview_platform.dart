@@ -1,6 +1,7 @@
 import 'package:webview_platform_interface/webview_platform_interface.dart';
 
 import 'linux_navigation_delegate.dart';
+import 'linux_proxy_controller.dart';
 import 'linux_webview_controller.dart';
 import 'linux_webview_cookie_manager.dart';
 import 'linux_webview_data_manager.dart';
@@ -40,6 +41,14 @@ class LinuxWebViewPlatform extends WebViewPlatform {
     PlatformWebViewCookieManagerCreationParams params,
   ) {
     return LinuxWebViewCookieManager(params);
+  }
+
+
+  @override
+  LinuxProxyController createPlatformProxyController(
+    PlatformProxyControllerCreationParams params,
+  ) {
+    return LinuxProxyController(params);
   }
 
   @override
