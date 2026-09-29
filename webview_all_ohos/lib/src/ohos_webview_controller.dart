@@ -1632,6 +1632,7 @@ class OhosWebViewWidget extends PlatformWebViewWidget {
           (_ohosParams.controller as OhosWebViewController)._webView,
         ),
         creationParamsCodec: const StandardMessageCodec(),
+        onFocus: () => params.onFocusChanged(true),
       );
     } else {
       return _ohosParams.platformViewsServiceProxy.initSurfaceOhosView(
@@ -1642,6 +1643,7 @@ class OhosWebViewWidget extends PlatformWebViewWidget {
           (_ohosParams.controller as OhosWebViewController)._webView,
         ),
         creationParamsCodec: const StandardMessageCodec(),
+        onFocus: () => params.onFocusChanged(true),
       );
     }
   }
