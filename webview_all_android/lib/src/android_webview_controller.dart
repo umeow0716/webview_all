@@ -1770,6 +1770,7 @@ AndroidViewController _initAndroidView(
       layoutDirection: layoutDirection,
       creationParams: identifier,
       creationParamsCodec: const StandardMessageCodec(),
+      onFocus: () => params.onFocusChanged(true),
     );
   } else {
     return platformViewsServiceProxy.initSurfaceAndroidView(
@@ -1778,6 +1779,7 @@ AndroidViewController _initAndroidView(
       layoutDirection: layoutDirection,
       creationParams: identifier,
       creationParamsCodec: const StandardMessageCodec(),
+      onFocus: () => params.onFocusChanged(true),
     );
   }
 }

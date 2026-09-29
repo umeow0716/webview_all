@@ -2430,6 +2430,111 @@ void main() {
       );
     });
 
+    for (final bool hybridComposition in <bool>[false, true]) {
+      testWidgets(
+        'synchronizes native and Flutter focus (hybrid: $hybridComposition)',
+        (WidgetTester tester) async {
+          final mockWebView = MockWebView();
+          final controller = createControllerWithMocks(
+            mockWebView: mockWebView,
+          );
+          android_webview.PigeonInstanceManager.instance.addDartCreatedInstance(
+            mockWebView,
+          );
+          final service = MockPlatformViewsServiceProxy();
+          final AndroidViewController nativeController = hybridComposition
+              ? MockExpensiveAndroidViewController()
+              : MockSurfaceAndroidViewController();
+          PlatformViewCreatedCallback? viewCreated;
+          VoidCallback? onFocus;
+          if (hybridComposition) {
+            when(
+              (nativeController as MockExpensiveAndroidViewController)
+                  .addOnPlatformViewCreatedListener(any),
+            ).thenAnswer((invocation) {
+              viewCreated =
+                  invocation.positionalArguments.single
+                      as PlatformViewCreatedCallback;
+            });
+            when(
+              service.initExpensiveAndroidView(
+                id: anyNamed('id'),
+                viewType: anyNamed('viewType'),
+                layoutDirection: anyNamed('layoutDirection'),
+                creationParams: anyNamed('creationParams'),
+                creationParamsCodec: anyNamed('creationParamsCodec'),
+                onFocus: anyNamed('onFocus'),
+              ),
+            ).thenAnswer((invocation) {
+              onFocus = invocation.namedArguments[#onFocus] as VoidCallback?;
+              return nativeController as ExpensiveAndroidViewController;
+            });
+          } else {
+            when(
+              (nativeController as MockSurfaceAndroidViewController)
+                  .addOnPlatformViewCreatedListener(any),
+            ).thenAnswer((invocation) {
+              viewCreated =
+                  invocation.positionalArguments.single
+                      as PlatformViewCreatedCallback;
+            });
+            when(
+              service.initSurfaceAndroidView(
+                id: anyNamed('id'),
+                viewType: anyNamed('viewType'),
+                layoutDirection: anyNamed('layoutDirection'),
+                creationParams: anyNamed('creationParams'),
+                creationParamsCodec: anyNamed('creationParamsCodec'),
+                onFocus: anyNamed('onFocus'),
+              ),
+            ).thenAnswer((invocation) {
+              onFocus = invocation.namedArguments[#onFocus] as VoidCallback?;
+              return nativeController as SurfaceAndroidViewController;
+            });
+          }
+          final inputFocus = FocusNode();
+          addTearDown(inputFocus.dispose);
+          final webView = AndroidWebViewWidget(
+            AndroidWebViewWidgetCreationParams(
+              controller: controller,
+              platformViewsServiceProxy: service,
+              displayWithHybridComposition: hybridComposition,
+            ),
+          );
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Material(
+                child: Column(
+                  children: <Widget>[
+                    TextField(focusNode: inputFocus, autofocus: true),
+                    Expanded(child: Builder(builder: webView.build)),
+                  ],
+                ),
+              ),
+            ),
+          );
+          viewCreated!(nativeController.viewId);
+          await tester.pump();
+          expect(inputFocus.hasFocus, isTrue);
+
+          expect(onFocus, isNotNull);
+          onFocus!();
+          await tester.pump();
+          expect(inputFocus.hasFocus, isFalse);
+          expect(
+            FocusManager.instance.primaryFocus?.debugLabel,
+            startsWith('PlatformView('),
+          );
+
+          inputFocus.requestFocus();
+          await tester.pump();
+          expect(inputFocus.hasFocus, isTrue);
+          verify(nativeController.clearFocus()).called(1);
+          await tester.pumpWidget(const SizedBox.shrink());
+        },
+      );
+    }
+
     testWidgets('default handling of custom views', (
       WidgetTester tester,
     ) async {
