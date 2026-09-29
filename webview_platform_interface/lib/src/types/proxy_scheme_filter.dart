@@ -17,11 +17,11 @@ class ProxySchemeFilter {
   static const ProxySchemeFilter matchHttps = ProxySchemeFilter._('https');
 
   /// All known scheme filters.
-  static const Set<ProxySchemeFilter> values = <ProxySchemeFilter>{
+  static const List<ProxySchemeFilter> values = <ProxySchemeFilter>[
     matchAllSchemes,
     matchHttp,
     matchHttps,
-  };
+  ];
 
   /// The string value passed through the platform channel.
   final String value;
