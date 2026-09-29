@@ -139,7 +139,39 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
           () => _handleJavaScriptDialogEvent(event),
         );
         break;
+      case 'fileSelectorRequest':
+        _dispatchEventHandler(
+          'file selector request',
+          () => _handleFileSelectorRequestEvent(event),
+        );
+        break;
+      case 'downloadStart':
+        _onDownloadStartCallback?.call(
+          LinuxDownloadStartRequest._fromEvent(event),
+        );
+        break;
     }
+  }
+
+
+  Future<void> _handleFileSelectorRequestEvent(
+    Map<dynamic, dynamic> event,
+  ) async {
+    final int requestId = (event['requestId'] as num?)?.toInt() ?? -1;
+    final LinuxFileSelectorCallback? callback = _onShowFileSelectorCallback;
+    List<String> files = const <String>[];
+    if (callback != null) {
+      try {
+        files = await callback(LinuxFileSelectorParams._fromEvent(event));
+      } catch (error, stackTrace) {
+        _reportEventError('application file selector callback', error, stackTrace);
+      }
+    }
+
+    await _invoke<void>('completeFileSelector', <String, Object?>{
+      'requestId': requestId,
+      'files': files,
+    });
   }
 
   Future<void> _handleNavigationRequestEvent(

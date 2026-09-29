@@ -786,6 +786,50 @@ void instance_method_call_cb(FlMethodChannel *channel,
     return;
   }
 
+  if (strcmp(method, "setFileSelectorCallbackEnabled") == 0) {
+    webview->file_selector_callback_enabled =
+        map_lookup_bool(args, "enabled", FALSE);
+    respond(method_call, success_response());
+    return;
+  }
+
+  if (strcmp(method, "completeFileSelector") == 0) {
+    const gint64 raw_request_id = map_lookup_int(args, "requestId", -1);
+    gpointer key = GINT_TO_POINTER(static_cast<gint>(raw_request_id));
+    WebKitFileChooserRequest *request = WEBKIT_FILE_CHOOSER_REQUEST(
+        g_hash_table_lookup(webview->pending_file_chooser_requests, key));
+    if (request == nullptr) {
+      respond(method_call, error_response("invalid_request",
+                                         "Unknown file selector request."));
+      return;
+    }
+
+    FlValue *files_value = map_lookup(args, "files");
+    if (files_value != nullptr &&
+        fl_value_get_type(files_value) == FL_VALUE_TYPE_LIST &&
+        fl_value_get_length(files_value) > 0) {
+      const size_t file_count = fl_value_get_length(files_value);
+      gchar **files = g_new0(gchar *, file_count + 1);
+      for (size_t i = 0; i < file_count; ++i) {
+        FlValue *file_value = fl_value_get_list_value(files_value, i);
+        if (file_value != nullptr &&
+            fl_value_get_type(file_value) == FL_VALUE_TYPE_STRING) {
+          files[i] = g_strdup(fl_value_get_string(file_value));
+        }
+      }
+      webkit_file_chooser_request_select_files(
+          request, reinterpret_cast<const gchar *const *>(files));
+      g_strfreev(files);
+    } else {
+      webkit_file_chooser_request_cancel(request);
+    }
+
+    g_hash_table_steal(webview->pending_file_chooser_requests, key);
+    g_object_unref(request);
+    respond(method_call, success_response());
+    return;
+  }
+
   if (strcmp(method, "openDevTools") == 0) {
     WebKitSettings *settings = webkit_web_view_get_settings(webview->web_view);
     webkit_settings_set_enable_developer_extras(settings, TRUE);

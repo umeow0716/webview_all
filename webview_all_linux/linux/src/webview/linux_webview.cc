@@ -44,6 +44,14 @@ static void destroy_pending_tls_error(gpointer data) {
   g_free(error);
 }
 
+static void destroy_pending_file_chooser_request(gpointer data) {
+  if (data == nullptr) {
+    return;
+  }
+  webkit_file_chooser_request_cancel(WEBKIT_FILE_CHOOSER_REQUEST(data));
+  g_object_unref(data);
+}
+
 static void destroy_pending_navigation_decision(gpointer data) {
   PendingNavigationDecision *pending =
       static_cast<PendingNavigationDecision *>(data);
@@ -215,6 +223,7 @@ static void resolve_all_pending_requests(LinuxWebView *webview) {
   }
   g_list_free(request_ids);
 
+  g_hash_table_remove_all(webview->pending_file_chooser_requests);
   g_hash_table_remove_all(webview->pending_tls_errors);
 }
 
@@ -708,6 +717,43 @@ event_cancel_cb(FlEventChannel *channel, FlValue *args, gpointer user_data) {
   return nullptr;
 }
 
+
+static gboolean run_file_chooser_cb(WebKitWebView *web_view,
+                                    WebKitFileChooserRequest *request,
+                                    gpointer user_data) {
+  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
+  if (!webview->file_selector_callback_enabled) {
+    return FALSE;
+  }
+
+  const gint request_id = next_request_id(webview);
+  g_hash_table_insert(webview->pending_file_chooser_requests,
+                      GINT_TO_POINTER(request_id), g_object_ref(request));
+
+  FlValue *event = fl_value_new_map();
+  fl_value_set_string_take(event, "type",
+                           fl_value_new_string("fileSelectorRequest"));
+  fl_value_set_string_take(event, "requestId",
+                           fl_value_new_int(request_id));
+  fl_value_set_string_take(
+      event, "mode",
+      fl_value_new_string(webkit_file_chooser_request_get_select_multiple(
+                              request)
+                              ? "openMultiple"
+                              : "open"));
+  FlValue *accept_types = fl_value_new_list();
+  const gchar *const *mime_types =
+      webkit_file_chooser_request_get_mime_types(request);
+  if (mime_types != nullptr) {
+    for (gsize index = 0; mime_types[index] != nullptr; ++index) {
+      fl_value_append_take(accept_types, fl_value_new_string(mime_types[index]));
+    }
+  }
+  fl_value_set_string_take(event, "acceptTypes", accept_types);
+  send_event(webview, event);
+  return TRUE;
+}
+
 static void webview_size_allocate_cb(GtkWidget *widget,
                                      GtkAllocation *allocation,
                                      gpointer user_data) {
@@ -758,6 +804,7 @@ void destroy_linux_webview(gpointer data) {
   g_hash_table_destroy(webview->pending_permission_requests);
   g_hash_table_destroy(webview->pending_script_dialogs);
   g_hash_table_destroy(webview->pending_tls_errors);
+  g_hash_table_destroy(webview->pending_file_chooser_requests);
   g_hash_table_destroy(webview->pending_request_timeouts);
   g_hash_table_destroy(webview->js_channel_signal_ids);
   g_hash_table_destroy(webview->js_channels);
@@ -790,6 +837,8 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self) {
       reinterpret_cast<GDestroyNotify>(webkit_script_dialog_unref));
   webview->pending_tls_errors = g_hash_table_new_full(
       g_direct_hash, g_direct_equal, nullptr, destroy_pending_tls_error);
+  webview->pending_file_chooser_requests = g_hash_table_new_full(
+      g_direct_hash, g_direct_equal, nullptr, destroy_pending_file_chooser_request);
   webview->pending_request_timeouts =
       g_hash_table_new(g_direct_hash, g_direct_equal);
   webview->js_channel_signal_ids =
@@ -807,7 +856,10 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self) {
   webview->vertical_scrollbar_enabled = TRUE;
   webview->horizontal_scrollbar_enabled = TRUE;
   webview->zoom_enabled = TRUE;
-  webview->download_policy = new DownloadPolicy(webview->web_view);
+  webview->file_selector_callback_enabled = FALSE;
+  webview->download_policy = new DownloadPolicy(webview);
+  g_signal_connect(webview->web_view, "run-file-chooser",
+                   G_CALLBACK(run_file_chooser_cb), webview);
   webview->media_playback_requires_user_gesture = -1;
   webview->frame_sequence = 0;
   webview->over_scroll_behavior = "";

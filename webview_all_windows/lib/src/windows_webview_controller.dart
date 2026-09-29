@@ -42,6 +42,43 @@ Future<void> _disposeFinalizedWindowsWebView(
   }
 }
 
+
+/// Metadata for a Windows WebView2 download start.
+class WindowsDownloadStartRequest {
+  /// Creates Windows download metadata.
+  const WindowsDownloadStartRequest({
+    required this.url,
+    this.resultFilePath,
+    this.totalBytesToReceive,
+  });
+
+  factory WindowsDownloadStartRequest._fromNative(
+    native_webview.WebviewDownloadEvent event,
+  ) {
+    return WindowsDownloadStartRequest(
+      url: event.url,
+      resultFilePath: event.resultFilePath.isEmpty ? null : event.resultFilePath,
+      totalBytesToReceive: event.totalBytesToReceive < 0
+          ? null
+          : event.totalBytesToReceive,
+    );
+  }
+
+  /// Download URL.
+  final String url;
+
+  /// WebView2's result file path, when available.
+  final String? resultFilePath;
+
+  /// Total bytes to receive, when WebView2 reports a known length.
+  final int? totalBytesToReceive;
+}
+
+/// Callback invoked when a Windows WebView2 download starts.
+typedef WindowsDownloadStartCallback = void Function(
+  WindowsDownloadStartRequest request,
+);
+
 /// Windows-specific policy for popup windows.
 enum WindowsPopupWindowPolicy {
   /// Allow popups to open separate windows.
@@ -236,6 +273,7 @@ class WindowsWebViewController extends PlatformWebViewController {
   void Function(ScrollPositionChange)? _onScrollPositionChangeCallback;
   void Function(PlatformWebViewPermissionRequest)?
   _onPlatformPermissionRequestCallback;
+  WindowsDownloadStartCallback? _onDownloadStartCallback;
 
   WindowsWebViewControllerCreationParams get _windowsParams =>
       params as WindowsWebViewControllerCreationParams;
@@ -385,6 +423,11 @@ class WindowsWebViewController extends PlatformWebViewController {
         native_webview.WebviewHttpResponseError error,
       ) {
         weakThis.target?._handleHttpResponseError(error);
+      }),
+      _webviewController.onDownloadEvent.listen((
+        native_webview.WebviewDownloadEvent event,
+      ) {
+        weakThis.target?._handleDownloadEvent(event);
       }),
       _webviewController.webMessage.listen((dynamic message) {
         weakThis.target?._handleWebMessage(message);
@@ -550,6 +593,15 @@ class WindowsWebViewController extends PlatformWebViewController {
 
   Future<void> _openWebView2DownloadPage() {
     return native_webview.WebviewController.openWebView2DownloadPage();
+  }
+
+  void _handleDownloadEvent(native_webview.WebviewDownloadEvent event) {
+    if (event.kind != native_types.WebviewDownloadEventKind.downloadStarted) {
+      return;
+    }
+    _onDownloadStartCallback?.call(
+      WindowsDownloadStartRequest._fromNative(event),
+    );
   }
 
   void _handleUrlChanged(String url) {
@@ -1437,6 +1489,11 @@ ${params.functionBody}
     _throwIfDisposed();
     _downloadsEnabled.request(enabled);
     await _ensureInitialized();
+  }
+
+  /// Sets a callback that is invoked when a Windows WebView2 download starts.
+  void setOnDownloadStart(WindowsDownloadStartCallback? onDownloadStart) {
+    _onDownloadStartCallback = onDownloadStart;
   }
 
   @override

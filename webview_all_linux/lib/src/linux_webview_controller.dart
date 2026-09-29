@@ -36,6 +36,78 @@ Future<void> _disposeFinalizedLinuxWebView(
   }
 }
 
+
+/// Mode requested by a Linux `<input type="file">` element.
+enum LinuxFileSelectorMode {
+  /// Select a single existing file.
+  open,
+
+  /// Select multiple existing files.
+  openMultiple,
+}
+
+/// Parameters for a Linux WebKitGTK file selector request.
+class LinuxFileSelectorParams {
+  /// Creates Linux file selector parameters.
+  const LinuxFileSelectorParams({
+    required this.mode,
+    this.acceptTypes = const <String>[],
+  });
+
+  factory LinuxFileSelectorParams._fromEvent(Map<dynamic, dynamic> event) {
+    final List<String> acceptTypes = <String>[];
+    if (event['acceptTypes'] case final List<dynamic> rawAcceptTypes) {
+      for (final dynamic value in rawAcceptTypes) {
+        acceptTypes.add('$value');
+      }
+    }
+    final String mode = '${event['mode'] ?? 'open'}';
+    return LinuxFileSelectorParams(
+      mode: mode == 'openMultiple'
+          ? LinuxFileSelectorMode.openMultiple
+          : LinuxFileSelectorMode.open,
+      acceptTypes: acceptTypes,
+    );
+  }
+
+  /// Requested selection mode.
+  final LinuxFileSelectorMode mode;
+
+  /// Accepted MIME types provided by WebKitGTK.
+  final List<String> acceptTypes;
+}
+
+/// Callback used to provide file paths for Linux file upload controls.
+typedef LinuxFileSelectorCallback =
+    Future<List<String>> Function(LinuxFileSelectorParams params);
+
+/// Metadata for a Linux WebKitGTK download start.
+class LinuxDownloadStartRequest {
+  /// Creates Linux download metadata.
+  const LinuxDownloadStartRequest({
+    required this.url,
+    this.suggestedFilename,
+  });
+
+  factory LinuxDownloadStartRequest._fromEvent(Map<dynamic, dynamic> event) {
+    return LinuxDownloadStartRequest(
+      url: '${event['url'] ?? ''}',
+      suggestedFilename: event['suggestedFilename'] as String?,
+    );
+  }
+
+  /// Download URL.
+  final String url;
+
+  /// Filename suggested by WebKitGTK, when available.
+  final String? suggestedFilename;
+}
+
+/// Callback invoked when a Linux WebKitGTK download starts.
+typedef LinuxDownloadStartCallback = void Function(
+  LinuxDownloadStartRequest request,
+);
+
 class LinuxWebViewController extends PlatformWebViewController {
   LinuxWebViewController(PlatformWebViewControllerCreationParams params)
     : super.implementation(
@@ -94,6 +166,8 @@ class LinuxWebViewController extends PlatformWebViewController {
   _onJavaScriptConfirmDialog;
   Future<String> Function(JavaScriptTextInputDialogRequest request)?
   _onJavaScriptTextInputDialog;
+  LinuxFileSelectorCallback? _onShowFileSelectorCallback;
+  LinuxDownloadStartCallback? _onDownloadStartCallback;
 
   Future<void> _initialize(
     WeakReference<LinuxWebViewController> weakThis,
@@ -680,6 +754,24 @@ class LinuxWebViewController extends PlatformWebViewController {
     return _invoke<void>('setDownloadsEnabled', <String, Object?>{
       'enabled': enabled,
     });
+  }
+
+  /// Sets a callback for Linux WebKitGTK file upload requests.
+  ///
+  /// When set to null, WebKitGTK uses its native file chooser. When set, the
+  /// callback must return absolute local file paths, or an empty list to cancel.
+  Future<void> setOnShowFileSelector(
+    LinuxFileSelectorCallback? onShowFileSelector,
+  ) {
+    _onShowFileSelectorCallback = onShowFileSelector;
+    return _invoke<void>('setFileSelectorCallbackEnabled', <String, Object?>{
+      'enabled': onShowFileSelector != null,
+    });
+  }
+
+  /// Sets a callback that is invoked when a Linux WebKitGTK download starts.
+  void setOnDownloadStart(LinuxDownloadStartCallback? onDownloadStart) {
+    _onDownloadStartCallback = onDownloadStart;
   }
 
   /// Sets whether JavaScript may open windows automatically.

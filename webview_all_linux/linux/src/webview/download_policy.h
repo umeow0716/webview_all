@@ -3,10 +3,12 @@
 
 #include <webkit2/webkit2.h>
 
+typedef struct _LinuxWebView LinuxWebView;
+
 // Owned by a single WebView and destroyed before that WebView is released.
 class DownloadPolicy {
 public:
-  explicit DownloadPolicy(WebKitWebView *web_view);
+  explicit DownloadPolicy(LinuxWebView *webview);
   ~DownloadPolicy();
   DownloadPolicy(const DownloadPolicy &) = delete;
   DownloadPolicy &operator=(const DownloadPolicy &) = delete;
@@ -16,7 +18,10 @@ public:
 private:
   static void OnDownloadStarted(WebKitWebContext *context,
                                 WebKitDownload *download, gpointer user_data);
-  WebKitWebView *web_view_;
+  static gboolean OnDecideDestination(WebKitDownload *download,
+                                      const gchar *suggested_filename,
+                                      gpointer user_data);
+  LinuxWebView *webview_;
   gulong signal_id_;
   bool enabled_ = true;
 };

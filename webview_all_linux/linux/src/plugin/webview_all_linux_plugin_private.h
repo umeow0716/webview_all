@@ -25,7 +25,7 @@ struct _WebviewAllLinuxPlugin {
   gboolean disposing;
 };
 
-typedef struct {
+typedef struct _LinuxWebView {
   WebviewAllLinuxPlugin *plugin;
   gint id;
   WebKitUserContentManager *content_manager;
@@ -39,6 +39,7 @@ typedef struct {
   GHashTable *pending_permission_requests;
   GHashTable *pending_script_dialogs;
   GHashTable *pending_tls_errors;
+  GHashTable *pending_file_chooser_requests;
   GHashTable *pending_request_timeouts;
   GHashTable *js_channel_signal_ids;
   GHashTable *js_channels;
@@ -53,6 +54,7 @@ typedef struct {
   gboolean vertical_scrollbar_enabled;
   gboolean horizontal_scrollbar_enabled;
   gboolean zoom_enabled;
+  gboolean file_selector_callback_enabled;
   DownloadPolicy *download_policy;
   gint media_playback_requires_user_gesture;
   const gchar *over_scroll_behavior;
