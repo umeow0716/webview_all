@@ -20,6 +20,10 @@ class ProxyController {
   /// Gets a shared [ProxyController] instance.
   static ProxyController instance() => ProxyController();
 
+  /// Whether proxy override is supported by the current platform.
+  static bool get isSupported =>
+      WebViewPlatform.instance?.supportsProxyOverride ?? false;
+
   /// Implementation of [PlatformProxyController] for the current platform.
   final PlatformProxyController platform;
 

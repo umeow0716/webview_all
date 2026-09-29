@@ -11,6 +11,9 @@ class LinuxWebViewPlatform extends WebViewPlatform {
   @override
   bool get supportsOffscreenWebViews => true;
 
+  @override
+  bool get supportsProxyOverride => true;
+
   static void registerWith() {
     WebViewPlatform.instance = LinuxWebViewPlatform();
   }

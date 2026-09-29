@@ -30,6 +30,9 @@ void main() {
 
   test('creates Linux platform implementation objects', () {
     final LinuxWebViewPlatform platform = LinuxWebViewPlatform();
+
+    expect(platform.supportsProxyOverride, isTrue);
+
     final LinuxWebViewController controller = platform
         .createPlatformWebViewController(
           const PlatformWebViewControllerCreationParams(),

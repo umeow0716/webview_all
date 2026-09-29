@@ -134,6 +134,10 @@ void main() {
     expect(ExtendsWebViewPlatform().supportsOffscreenWebViews, isFalse);
   });
 
+  test('Proxy override is unsupported by default', () {
+    expect(ExtendsWebViewPlatform().supportsProxyOverride, isFalse);
+  });
+
   test('Can be mocked with `implements`', () {
     final MockWebViewPlatform mock = MockWebViewPlatformWithMixin();
     WebViewPlatform.instance = mock;

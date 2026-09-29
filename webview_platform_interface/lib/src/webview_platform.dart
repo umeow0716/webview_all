@@ -48,6 +48,12 @@ abstract class WebViewPlatform extends PlatformInterface {
   /// unsupported platforms do not allocate native or browser resources.
   bool get supportsOffscreenWebViews => false;
 
+  /// Whether this platform supports process-wide WebView proxy override.
+  ///
+  /// Platforms that do not support proxy override should keep this default
+  /// value and the default unimplemented [createPlatformProxyController].
+  bool get supportsProxyOverride => false;
+
   /// Creates a new [PlatformWebViewCookieManager].
   ///
   /// This function should only be called by the app-facing package.
