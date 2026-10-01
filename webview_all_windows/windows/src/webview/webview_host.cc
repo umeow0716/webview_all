@@ -357,6 +357,19 @@ WebviewHost::CreateWebResourceRequest(const std::string &url,
   return request;
 }
 
+wil::com_ptr<ICoreWebView2WebResourceResponse>
+WebviewHost::CreateWebResourceResponse(int status_code,
+                                       const std::string &reason_phrase,
+                                       const std::string &headers) {
+  wil::com_ptr<ICoreWebView2WebResourceResponse> response;
+  if (FAILED(webview_env_->CreateWebResourceResponse(
+          nullptr, status_code, util::Utf16FromUtf8(reason_phrase).c_str(),
+          util::Utf16FromUtf8(headers).c_str(), response.put()))) {
+    return nullptr;
+  }
+  return response;
+}
+
 void WebviewHost::CreateWebViewCompositionController(
     HWND hwnd, CompositionControllerCreationCallback callback) {
   auto hr = webview_env_->CreateCoreWebView2CompositionController(

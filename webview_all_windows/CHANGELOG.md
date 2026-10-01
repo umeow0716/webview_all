@@ -2,6 +2,9 @@
 
 * Fix a certificate API deprecation warning when building for iOS and macOS.
 * Block HTTP resources on HTTPS pages by default on OHOS.
+* Preserve page-initiated Windows HTTP(S) navigation requests while awaiting navigation-delegate decisions, including POST bodies, request headers, cookies, redirect methods, and browser history semantics.
+* Remove temporary site-specific WebView2 request and response diagnostics from the Windows package.
+* Fix Windows virtual-host mapping APIs reporting successful HRESULT values as `false`.
 
 ## 1.4.3
 

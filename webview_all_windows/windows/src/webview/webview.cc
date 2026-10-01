@@ -7,7 +7,6 @@
 #include <limits>
 #include <map>
 #include <memory>
-#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -196,317 +195,6 @@ bool CreateNativeCookie(ICoreWebView2CookieManager *cookie_manager,
 }
 
 
-std::string ToLowerAscii(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  return value;
-}
-
-bool ContainsAsciiCaseInsensitive(const std::string &text,
-                                  const std::string &needle) {
-  return ToLowerAscii(text).find(ToLowerAscii(needle)) != std::string::npos;
-}
-
-std::optional<std::string>
-FindHeaderCaseInsensitive(const std::map<std::string, std::string> &headers,
-                          const std::string &name) {
-  const std::string expected = ToLowerAscii(name);
-  for (const auto &entry : headers) {
-    if (ToLowerAscii(entry.first) == expected) {
-      return entry.second;
-    }
-  }
-  return std::nullopt;
-}
-
-std::string TrimAsciiWhitespace(std::string value) {
-  const auto is_space = [](unsigned char c) { return std::isspace(c) != 0; };
-  value.erase(value.begin(),
-              std::find_if(value.begin(), value.end(),
-                           [&](char c) { return !is_space(c); }));
-  value.erase(std::find_if(value.rbegin(), value.rend(),
-                           [&](char c) { return !is_space(c); })
-                  .base(),
-              value.end());
-  return value;
-}
-
-std::string CookieNamesForDebugLog(const std::string &cookie_header) {
-  std::vector<std::string> names;
-  std::stringstream stream(cookie_header);
-  std::string part;
-  while (std::getline(stream, part, ';')) {
-    part = TrimAsciiWhitespace(part);
-    if (part.empty()) {
-      continue;
-    }
-    const size_t separator = part.find('=');
-    if (separator == std::string::npos || separator == 0) {
-      continue;
-    }
-    names.push_back(part.substr(0, separator));
-  }
-
-  if (names.empty()) {
-    return "<none>";
-  }
-
-  std::string result;
-  for (size_t i = 0; i < names.size(); ++i) {
-    if (i > 0) {
-      result.append(",");
-    }
-    result.append(names[i]);
-  }
-  return result;
-}
-
-bool ShouldLogPortalRequestHeaders(const std::string &url) {
-  return ContainsAsciiCaseInsensitive(url, "nportal.ntut.edu.tw") ||
-         ContainsAsciiCaseInsensitive(url, "aps.ntut.edu.tw") ||
-         ContainsAsciiCaseInsensitive(url, "aps-stu.ntut.edu.tw");
-}
-
-void LogPortalRequestHeaders(ICoreWebView2WebResourceRequest *request) {
-  if (request == nullptr) {
-    return;
-  }
-
-  wil::unique_cotaskmem_string wuri;
-  if (FAILED(request->get_Uri(&wuri)) || wuri == nullptr) {
-    return;
-  }
-  const std::string url = util::Utf8FromUtf16(wuri.get());
-  if (!ShouldLogPortalRequestHeaders(url)) {
-    return;
-  }
-
-  std::string method;
-  wil::unique_cotaskmem_string wmethod;
-  if (SUCCEEDED(request->get_Method(&wmethod)) && wmethod != nullptr) {
-    method = util::Utf8FromUtf16(wmethod.get());
-  }
-
-  std::map<std::string, std::string> request_headers;
-  wil::com_ptr<ICoreWebView2HttpRequestHeaders> native_request_headers;
-  if (SUCCEEDED(request->get_Headers(native_request_headers.put()))) {
-    request_headers = ReadHttpHeaders(native_request_headers.get());
-  }
-
-  const std::optional<std::string> cookie_header =
-      FindHeaderCaseInsensitive(request_headers, "Cookie");
-  const std::optional<std::string> user_agent_header =
-      FindHeaderCaseInsensitive(request_headers, "User-Agent");
-
-  std::ostringstream message;
-  message << "[WebView2Request] " << (method.empty() ? "<method?>" : method)
-          << " " << url << " cookieHeader="
-          << (cookie_header.has_value() ? "present" : "missing")
-          << " cookieLength="
-          << (cookie_header.has_value() ? cookie_header->size() : 0)
-          << " cookieNames="
-          << (cookie_header.has_value()
-                  ? CookieNamesForDebugLog(cookie_header.value())
-                  : "<none>")
-          << " userAgent="
-          << (user_agent_header.has_value() ? user_agent_header.value()
-                                            : "<missing>");
-  util::LogWarning(message.str());
-}
-
-constexpr size_t kPortalResponseBodyLogLimit = 8192;
-
-bool ShouldLogPortalResponseBody(const std::string &url) {
-  return ContainsAsciiCaseInsensitive(url,
-                                      "nportal.ntut.edu.tw/ssoIndex.do");
-}
-
-std::string ReadStreamPrefixForDebugLog(IStream *stream, size_t limit) {
-  if (stream == nullptr || limit == 0) {
-    return {};
-  }
-
-  std::string result;
-  result.reserve((std::min)(limit, static_cast<size_t>(4096)));
-
-  char buffer[2048];
-  while (result.size() < limit) {
-    const size_t remaining = limit - result.size();
-    const ULONG to_read = static_cast<ULONG>(
-        (std::min)(remaining, static_cast<size_t>(sizeof(buffer))));
-    ULONG bytes_read = 0;
-    const HRESULT hr = stream->Read(buffer, to_read, &bytes_read);
-    if (FAILED(hr) || bytes_read == 0) {
-      break;
-    }
-    result.append(buffer, buffer + bytes_read);
-  }
-
-  return result;
-}
-
-std::string CompactForSingleLineDebugLog(std::string value, size_t limit) {
-  for (char &ch : value) {
-    if (ch == '\r' || ch == '\n' || ch == '\t') {
-      ch = ' ';
-    }
-  }
-
-  std::string compact;
-  compact.reserve((std::min)(value.size(), limit));
-  bool last_was_space = false;
-  for (char ch : value) {
-    const bool is_space = std::isspace(static_cast<unsigned char>(ch)) != 0;
-    if (is_space) {
-      if (!last_was_space && !compact.empty()) {
-        compact.push_back(' ');
-      }
-      last_was_space = true;
-      continue;
-    }
-    compact.push_back(ch);
-    last_was_space = false;
-    if (compact.size() >= limit) {
-      compact.append("...");
-      break;
-    }
-  }
-  return compact;
-}
-
-void LogPortalResponseBodyAsync(const std::string &method, const std::string &url,
-                                int status_code,
-                                ICoreWebView2WebResourceResponseView *response) {
-  if (response == nullptr || !ShouldLogPortalResponseBody(url)) {
-    return;
-  }
-
-  response->GetContent(
-      Callback<ICoreWebView2WebResourceResponseViewGetContentCompletedHandler>(
-          [method, url, status_code](HRESULT error_code, IStream *stream)
-              -> HRESULT {
-            if (FAILED(error_code) || stream == nullptr) {
-              std::ostringstream error_message;
-              error_message << "[WebView2ResponseBody] "
-                            << (method.empty() ? "<method?>" : method) << " "
-                            << url << " status=" << status_code
-                            << " readError=0x" << std::hex << error_code;
-              util::LogWarning(error_message.str());
-              return S_OK;
-            }
-
-            const std::string body = ReadStreamPrefixForDebugLog(
-                stream, kPortalResponseBodyLogLimit);
-            const std::string compact =
-                CompactForSingleLineDebugLog(body, 2400);
-
-            std::ostringstream message;
-            message << "[WebView2ResponseBody] "
-                    << (method.empty() ? "<method?>" : method) << " " << url
-                    << " status=" << status_code << " bytesRead="
-                    << body.size() << " hasForm="
-                    << (ContainsAsciiCaseInsensitive(body, "<form") ? "true"
-                                                                  : "false")
-                    << " hasOauth2Server="
-                    << (ContainsAsciiCaseInsensitive(body, "oauth2Server.do")
-                            ? "true"
-                            : "false")
-                    << " hasClientId="
-                    << (ContainsAsciiCaseInsensitive(body, "client_id")
-                            ? "true"
-                            : "false")
-                    << " hasSubmit="
-                    << (ContainsAsciiCaseInsensitive(body, "submit") ? "true"
-                                                                   : "false")
-                    << " hasLocation="
-                    << (ContainsAsciiCaseInsensitive(body, "location") ? "true"
-                                                                     : "false")
-                    << " body=" << compact;
-            util::LogWarning(message.str());
-            return S_OK;
-          })
-          .Get());
-}
-
-std::string HeaderNamesForDebugLog(
-    const std::map<std::string, std::string> &headers) {
-  if (headers.empty()) {
-    return "<none>";
-  }
-
-  std::string result;
-  for (const auto &entry : headers) {
-    if (!result.empty()) {
-      result.append(",");
-    }
-    result.append(entry.first);
-  }
-  return result;
-}
-
-void LogPortalResponseHeaders(ICoreWebView2WebResourceRequest *request,
-                              ICoreWebView2WebResourceResponseView *response) {
-  if (request == nullptr || response == nullptr) {
-    return;
-  }
-
-  wil::unique_cotaskmem_string wuri;
-  if (FAILED(request->get_Uri(&wuri)) || wuri == nullptr) {
-    return;
-  }
-  const std::string url = util::Utf8FromUtf16(wuri.get());
-  if (!ShouldLogPortalRequestHeaders(url)) {
-    return;
-  }
-
-  std::string method;
-  wil::unique_cotaskmem_string wmethod;
-  if (SUCCEEDED(request->get_Method(&wmethod)) && wmethod != nullptr) {
-    method = util::Utf8FromUtf16(wmethod.get());
-  }
-
-  int status_code = 0;
-  response->get_StatusCode(&status_code);
-
-  std::optional<std::string> reason_phrase;
-  wil::unique_cotaskmem_string wreason_phrase;
-  if (SUCCEEDED(response->get_ReasonPhrase(&wreason_phrase)) &&
-      wreason_phrase != nullptr) {
-    reason_phrase = util::Utf8FromUtf16(wreason_phrase.get());
-  }
-
-  std::map<std::string, std::string> response_headers;
-  wil::com_ptr<ICoreWebView2HttpResponseHeaders> native_response_headers;
-  if (SUCCEEDED(response->get_Headers(native_response_headers.put()))) {
-    response_headers = ReadHttpHeaders(native_response_headers.get());
-  }
-
-  const std::optional<std::string> location =
-      FindHeaderCaseInsensitive(response_headers, "Location");
-  const std::optional<std::string> content_type =
-      FindHeaderCaseInsensitive(response_headers, "Content-Type");
-  const std::optional<std::string> refresh =
-      FindHeaderCaseInsensitive(response_headers, "Refresh");
-  const std::optional<std::string> set_cookie =
-      FindHeaderCaseInsensitive(response_headers, "Set-Cookie");
-
-  std::ostringstream message;
-  message << "[WebView2Response] " << (method.empty() ? "<method?>" : method)
-          << " " << url << " status=" << status_code << " reason="
-          << (reason_phrase.has_value() ? reason_phrase.value() : "<missing>")
-          << " location="
-          << (location.has_value() ? location.value() : "<missing>")
-          << " refresh="
-          << (refresh.has_value() ? refresh.value() : "<missing>")
-          << " contentType="
-          << (content_type.has_value() ? content_type.value() : "<missing>")
-          << " setCookie="
-          << (set_cookie.has_value() ? "present" : "missing")
-          << " responseHeaderNames=" << HeaderNamesForDebugLog(response_headers);
-  util::LogWarning(message.str());
-  LogPortalResponseBodyAsync(method, url, status_code, response);
-}
-
 std::string CanonicalizeNavigationUrl(const std::string &url) {
   try {
     const winrt::Windows::Foundation::Uri uri(winrt::to_hstring(url));
@@ -514,6 +202,12 @@ std::string CanonicalizeNavigationUrl(const std::string &url) {
   } catch (...) {
     return url;
   }
+}
+
+std::string CanonicalizeNetworkRequestUrl(const std::string &url) {
+  const size_t fragment = url.find('#');
+  return CanonicalizeNavigationUrl(
+      fragment == std::string::npos ? url : url.substr(0, fragment));
 }
 
 } // namespace
@@ -694,21 +388,42 @@ void Webview::RegisterEventHandlers() {
               return S_OK;
             }
 
-            if (FAILED(args->put_Cancel(TRUE))) {
-              return S_OK;
-            }
-
-            UINT64 navigation_id = 0;
-            if (SUCCEEDED(args->get_NavigationId(&navigation_id))) {
-              policy_cancelled_navigation_ids_.insert(navigation_id);
-            }
-
             BOOL is_user_initiated = FALSE;
             BOOL is_redirected = FALSE;
             args->get_IsUserInitiated(&is_user_initiated);
             args->get_IsRedirected(&is_redirected);
 
+            UINT64 navigation_id = 0;
+            args->get_NavigationId(&navigation_id);
             const uint64_t request_id = ++latest_navigation_request_id_;
+
+            // Never cancel and replay HTTP(S) navigations by URL. Doing so
+            // silently converts page-initiated POST requests into GET requests
+            // and drops request bodies and request-specific headers. When
+            // WebResourceRequested is available, defer the Dart policy decision
+            // there so the original request remains intact. If WebView2 cannot
+            // surface WebResourceRequested (for example a virtual-host mapping),
+            // fail open and preserve the browser's original navigation semantics.
+            if (IsNetworkNavigation(url)) {
+              if (UsesDeferredNetworkNavigationPolicy(url)) {
+                QueuePendingNetworkNavigationPolicy(
+                    url, is_user_initiated == TRUE, is_redirected == TRUE,
+                    request_id, navigation_id);
+              }
+              return S_OK;
+            }
+
+            // Non-network navigations have no HTTP request body to preserve.
+            // Keep the existing URL-only fallback so async navigation delegates
+            // can still prevent schemes that WebResourceRequested cannot defer.
+            if (FAILED(args->put_Cancel(TRUE))) {
+              return S_OK;
+            }
+
+            if (navigation_id != 0) {
+              policy_cancelled_navigation_ids_.insert(navigation_id);
+            }
+
             const std::weak_ptr<LifetimeState> weak_state = lifetime_state_;
             navigation_requested_callback_(
                 url, is_user_initiated == TRUE, is_redirected == TRUE,
@@ -744,9 +459,11 @@ void Webview::RegisterEventHandlers() {
           [this](ICoreWebView2 *sender,
                  ICoreWebView2NavigationCompletedEventArgs *args) -> HRESULT {
             UINT64 navigation_id = 0;
-            if (SUCCEEDED(args->get_NavigationId(&navigation_id)) &&
-                policy_cancelled_navigation_ids_.erase(navigation_id) > 0) {
-              return S_OK;
+            if (SUCCEEDED(args->get_NavigationId(&navigation_id))) {
+              DiscardPendingNetworkNavigationPolicy(navigation_id);
+              if (policy_cancelled_navigation_ids_.erase(navigation_id) > 0) {
+                return S_OK;
+              }
             }
 
             BOOL is_success;
@@ -768,23 +485,98 @@ void Webview::RegisterEventHandlers() {
       &event_registrations_.navigation_completed_token_);
 
   if (SUCCEEDED(webview_->AddWebResourceRequestedFilter(
-          L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL))) {
-    webview_->add_WebResourceRequested(
-        Callback<ICoreWebView2WebResourceRequestedEventHandler>(
-            [](ICoreWebView2 *sender,
-               ICoreWebView2WebResourceRequestedEventArgs *args) -> HRESULT {
-              if (args == nullptr) {
-                return S_OK;
-              }
+          L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT))) {
+    const HRESULT resource_request_handler_result =
+        webview_->add_WebResourceRequested(
+            Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+                [this](ICoreWebView2 *sender,
+                       ICoreWebView2WebResourceRequestedEventArgs *args)
+                    -> HRESULT {
+                  if (args == nullptr) {
+                    return S_OK;
+                  }
 
-              wil::com_ptr<ICoreWebView2WebResourceRequest> request;
-              if (SUCCEEDED(args->get_Request(request.put())) && request) {
-                LogPortalRequestHeaders(request.get());
-              }
-              return S_OK;
-            })
-            .Get(),
-        &event_registrations_.web_resource_requested_token_);
+                  wil::com_ptr<ICoreWebView2WebResourceRequest> request;
+                  if (FAILED(args->get_Request(request.put())) || !request) {
+                    return S_OK;
+                  }
+
+                  wil::unique_cotaskmem_string wuri;
+                  if (FAILED(request->get_Uri(&wuri)) || wuri == nullptr) {
+                    return S_OK;
+                  }
+                  const std::string url = util::Utf8FromUtf16(wuri.get());
+                  auto pending = TakePendingNetworkNavigationPolicy(url);
+                  if (!pending.has_value() ||
+                      !navigation_requested_callback_) {
+                    return S_OK;
+                  }
+
+                  wil::com_ptr<ICoreWebView2Deferral> deferral;
+                  if (FAILED(args->GetDeferral(deferral.put())) || !deferral) {
+                    util::LogWarning(
+                        "Deferring a WebView2 navigation policy request "
+                        "failed; allowing the original request to continue.");
+                    return S_OK;
+                  }
+
+                  wil::com_ptr<ICoreWebView2WebResourceRequestedEventArgs>
+                      request_args;
+                  args->AddRef();
+                  request_args.attach(args);
+
+                  // A 204 navigation response leaves the current document in
+                  // place, matching NavigationDecision.prevent without
+                  // reconstructing or mutating the original request.
+                  wil::com_ptr<ICoreWebView2WebResourceResponse>
+                      blocked_response = host_->CreateWebResourceResponse(
+                          204, "No Content", "Cache-Control: no-store\r\n");
+                  const std::weak_ptr<LifetimeState> weak_state =
+                      lifetime_state_;
+                  const uint64_t policy_request_id = pending->request_id;
+                  const UINT64 navigation_id = pending->navigation_id;
+
+                  navigation_requested_callback_(
+                      pending->url, pending->is_user_initiated,
+                      pending->is_redirected,
+                      [weak_state, policy_request_id, navigation_id,
+                       deferral = std::move(deferral),
+                       request_args = std::move(request_args),
+                       blocked_response = std::move(blocked_response)](
+                          bool allow) mutable {
+                        const std::shared_ptr<LifetimeState> state =
+                            weak_state.lock();
+                        const bool is_current_request =
+                            state && state->owner &&
+                            state->owner->latest_navigation_request_id_ ==
+                                policy_request_id;
+                        const bool should_allow =
+                            allow && is_current_request;
+
+                        if (!should_allow) {
+                          if (state && state->owner && navigation_id != 0) {
+                            state->owner->policy_cancelled_navigation_ids_
+                                .insert(navigation_id);
+                          }
+
+                          if (blocked_response) {
+                            if (FAILED(request_args->put_Response(
+                                    blocked_response.get())) &&
+                                state && state->owner) {
+                              state->owner->Stop();
+                            }
+                          } else if (state && state->owner) {
+                            state->owner->Stop();
+                          }
+                        }
+                        deferral->Complete();
+                      });
+                  return S_OK;
+                })
+                .Get(),
+            &event_registrations_.web_resource_requested_token_);
+    web_resource_navigation_policy_available_ =
+        SUCCEEDED(resource_request_handler_result);
   }
 
   auto webview2 = webview_.try_query<ICoreWebView2_2>();
@@ -803,8 +595,6 @@ void Webview::RegisterEventHandlers() {
               if (FAILED(args->get_Request(request.put())) || !request) {
                 return S_OK;
               }
-
-              LogPortalResponseHeaders(request.get(), response.get());
 
               if (!http_response_error_callback_) {
                 return S_OK;
@@ -1749,6 +1539,7 @@ void Webview::SetJavaScriptDialogCallbacksEnabled(bool alert, bool confirm,
 void Webview::InvalidatePendingNavigationRequests() {
   ++latest_navigation_request_id_;
   approved_navigation_urls_.clear();
+  pending_network_navigation_policies_.clear();
   bypass_next_navigation_count_ = 0;
 }
 
@@ -1768,6 +1559,70 @@ bool Webview::ConsumeApprovedNavigation(const std::string &url) {
     return true;
   }
   return false;
+}
+
+bool Webview::IsNetworkNavigation(const std::string &url) const {
+  try {
+    const winrt::Windows::Foundation::Uri uri(winrt::to_hstring(url));
+    const std::string scheme = winrt::to_string(uri.SchemeName());
+    return scheme == "http" || scheme == "https";
+  } catch (...) {
+    return false;
+  }
+}
+
+bool Webview::UsesDeferredNetworkNavigationPolicy(
+    const std::string &url) const {
+  return web_resource_navigation_policy_available_ && IsNetworkNavigation(url);
+}
+
+void Webview::QueuePendingNetworkNavigationPolicy(
+    const std::string &url, bool is_user_initiated, bool is_redirected,
+    uint64_t request_id, UINT64 navigation_id) {
+  const std::string key = CanonicalizeNetworkRequestUrl(url);
+  pending_network_navigation_policies_[key].push_back(
+      {url, is_user_initiated, is_redirected, request_id, navigation_id});
+}
+
+std::optional<Webview::PendingNetworkNavigationPolicy>
+Webview::TakePendingNetworkNavigationPolicy(const std::string &url) {
+  const std::string key = CanonicalizeNetworkRequestUrl(url);
+  auto pending = pending_network_navigation_policies_.find(key);
+  if (pending == pending_network_navigation_policies_.end() ||
+      pending->second.empty()) {
+    return std::nullopt;
+  }
+
+  PendingNetworkNavigationPolicy result =
+      std::move(pending->second.front());
+  pending->second.pop_front();
+  if (pending->second.empty()) {
+    pending_network_navigation_policies_.erase(pending);
+  }
+  return result;
+}
+
+void Webview::DiscardPendingNetworkNavigationPolicy(UINT64 navigation_id) {
+  if (navigation_id == 0) {
+    return;
+  }
+
+  for (auto pending = pending_network_navigation_policies_.begin();
+       pending != pending_network_navigation_policies_.end();) {
+    auto &policies = pending->second;
+    policies.erase(
+        std::remove_if(policies.begin(), policies.end(),
+                       [navigation_id](
+                           const PendingNetworkNavigationPolicy &policy) {
+                         return policy.navigation_id == navigation_id;
+                       }),
+        policies.end());
+    if (policies.empty()) {
+      pending = pending_network_navigation_policies_.erase(pending);
+    } else {
+      ++pending;
+    }
+  }
 }
 
 void Webview::ResumeNavigation(uint64_t request_id, const std::string &url) {
@@ -2250,9 +2105,9 @@ bool Webview::SetVirtualHostNameMapping(
     break;
   }
 
-  return webview->SetVirtualHostNameToFolderMapping(
+  return SUCCEEDED(webview->SetVirtualHostNameToFolderMapping(
       util::Utf16FromUtf8(hostName).c_str(), util::Utf16FromUtf8(path).c_str(),
-      accessKindIntValue);
+      accessKindIntValue));
 }
 
 bool Webview::ClearVirtualHostNameMapping(const std::string &hostName) {
@@ -2266,8 +2121,8 @@ bool Webview::ClearVirtualHostNameMapping(const std::string &hostName) {
     return false;
   }
 
-  return webview->ClearVirtualHostNameToFolderMapping(
-      util::Utf16FromUtf8(hostName).c_str());
+  return SUCCEEDED(webview->ClearVirtualHostNameToFolderMapping(
+      util::Utf16FromUtf8(hostName).c_str()));
 }
 
 void Webview::UpdateDownloadProgress(ICoreWebView2DownloadOperation *download) {

@@ -5,11 +5,13 @@
 #include <windows.ui.composition.h>
 #include <winrt/base.h>
 
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -366,6 +368,14 @@ private:
     Webview *owner = nullptr;
   };
 
+  struct PendingNetworkNavigationPolicy {
+    std::string url;
+    bool is_user_initiated = false;
+    bool is_redirected = false;
+    uint64_t request_id = 0;
+    UINT64 navigation_id = 0;
+  };
+
   HWND parent_window_;
   bool is_valid_ = false;
   float scale_factor_ = 1.0;
@@ -388,12 +398,15 @@ private:
   bool java_script_confirm_dialog_enabled_ = false;
   bool java_script_prompt_dialog_enabled_ = false;
   bool navigation_request_callbacks_enabled_ = false;
+  bool web_resource_navigation_policy_available_ = false;
   bool downloads_enabled_ = true;
   HRESULT download_handler_result_ = E_NOINTERFACE;
   uint64_t latest_navigation_request_id_ = 0;
   size_t bypass_next_navigation_count_ = 0;
   std::unordered_multiset<std::string> approved_navigation_urls_;
   std::unordered_set<uint64_t> policy_cancelled_navigation_ids_;
+  std::unordered_map<std::string, std::deque<PendingNetworkNavigationPolicy>>
+      pending_network_navigation_policies_;
   double horizontal_scroll_remainder_ = 0.0;
   double vertical_scroll_remainder_ = 0.0;
   std::shared_ptr<LifetimeState> lifetime_state_ =
@@ -439,6 +452,16 @@ private:
   void InvalidatePendingNavigationRequests();
   void MarkNavigationApproved(const std::string &url);
   bool ConsumeApprovedNavigation(const std::string &url);
+  bool IsNetworkNavigation(const std::string &url) const;
+  bool UsesDeferredNetworkNavigationPolicy(const std::string &url) const;
+  void QueuePendingNetworkNavigationPolicy(const std::string &url,
+                                           bool is_user_initiated,
+                                           bool is_redirected,
+                                           uint64_t request_id,
+                                           UINT64 navigation_id);
+  std::optional<PendingNetworkNavigationPolicy>
+  TakePendingNetworkNavigationPolicy(const std::string &url);
+  void DiscardPendingNetworkNavigationPolicy(UINT64 navigation_id);
   void ResumeNavigation(uint64_t request_id, const std::string &url);
   void EnableSecurityUpdates();
   void SendScroll(double offset, bool horizontal);

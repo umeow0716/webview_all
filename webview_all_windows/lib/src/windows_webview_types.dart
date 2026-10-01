@@ -35,7 +35,9 @@ enum WebviewPermissionDecision { none, allow, deny }
 ///
 /// [allow] allows popups and will create new windows.
 /// [deny] suppresses popups.
-/// [sameWindow] displays popup contents in the current WebView.
+/// [sameWindow] displays popup contents in the current WebView. WebView2 only
+/// exposes the target URI for new-window requests, so request methods and POST
+/// bodies cannot be preserved when redirecting a popup into the current view.
 enum WebviewPopupWindowPolicy { allow, deny, sameWindow }
 
 /// The kind of cross origin resource access for virtual hosts

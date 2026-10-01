@@ -88,6 +88,10 @@ enum WindowsPopupWindowPolicy {
   deny,
 
   /// Open popup content in the current window.
+  ///
+  /// WebView2's new-window event exposes the target URI but not an original
+  /// request method or POST body. Prefer [allow] for sites that submit forms to
+  /// a new window and require exact request preservation.
   sameWindow,
 }
 

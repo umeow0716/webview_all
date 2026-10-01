@@ -83,6 +83,10 @@ public:
                            const std::string &headers,
                            const std::vector<uint8_t> *body);
 
+  wil::com_ptr<ICoreWebView2WebResourceResponse>
+  CreateWebResourceResponse(int status_code, const std::string &reason_phrase,
+                            const std::string &headers);
+
 private:
   wil::com_ptr<ICoreWebView2Environment3> webview_env_;
 
