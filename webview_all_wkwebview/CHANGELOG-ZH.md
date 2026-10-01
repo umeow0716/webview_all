@@ -1,3 +1,8 @@
+## 1.4.4
+
+* 修复 iOS、macOS 构建时的证书 API 弃用警告。
+* OHOS 默认禁止 HTTPS 页面加载 HTTP 资源。
+
 ## 1.4.3
 
 * 修复 Android 部分 Canvas 网页应用无法唤起软键盘的问题。

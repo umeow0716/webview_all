@@ -16,15 +16,24 @@ export struct OhosWebView {
   controller: web_webview.WebviewController = this.webView.getController();
 
   @State textZoomRatio: number = this.webView.getWebSettings().getTextZoom();
+  @State mixedContentMode: MixedMode = this.webView.getWebSettings().getMixedContentMode();
   @State disposed: boolean = false;
 
   aboutToAppear(): void {
+    this.mixedContentMode = this.webView.getWebSettings().getMixedContentMode();
+    this.webView.getWebSettings().onMixedContentModeChanged((mode: MixedMode) => {
+      this.mixedContentMode = mode;
+    });
     this.webView.getWebSettings().onTextZoomChanged((ratio: number) => {
       this.textZoomRatio = ratio;
     });
     this.webView.setOnDisposeCallback(() => {
       this.disposed = true;
     });
+  }
+
+  aboutToDisappear(): void {
+    this.webView.getWebSettings().onMixedContentModeChanged(undefined);
   }
 
   build() {
@@ -44,7 +53,7 @@ export struct OhosWebView {
           .metaViewport(this.webView.getWebSettings().getUseWideViewPort())
           .fileAccess(this.webView.getWebSettings().getAllowFileAccess())
           .textZoomRatio(this.textZoomRatio)
-          .mixedMode(MixedMode.All)
+          .mixedMode(this.mixedContentMode)
           .onControllerAttached(this.webView.onControllerAttached)
           .onDownloadStart(this.webView.onDownloadStart)
           .onPageBegin(this.webView.onPageBegin)

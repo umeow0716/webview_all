@@ -24,6 +24,7 @@ final params = OhosWebViewControllerCreationParams(
   loadWithOverviewMode: true,
   useWideViewPort: true,
   allowFileAccess: true,
+  mixedContentMode: OhosMixedContentMode.neverAllow,
   mediaPlaybackRequiresUserGesture: false,
   supportZoom: true,
   textZoom: 100,
@@ -42,9 +43,14 @@ final params = OhosWebViewControllerCreationParams(
 | `setLoadWithOverviewMode` / `setUseWideViewPort` | 视口相关设置。 |
 | `setDisplayZoomControls` / `setBuiltInZoomControls` | 缩放控件。 |
 | `setAllowFileAccess` | file access。 |
+| `setMixedContentMode` | 控制 HTTP/HTTPS 混合内容。 |
 | `setOnShowFileSelector` | 文件选择。 |
 | `setGeolocationPermissionsPromptCallbacks` | 定位提示。 |
 | `setCustomWidgetCallbacks` | 全屏 custom view。 |
+
+## 混合内容
+
+从 1.4.4 起，HTTPS 页面默认不能加载不安全的 HTTP 资源，建议将资源地址改为 HTTPS。如果需要兼容旧网页，可在加载页面前，通过创建参数或 `setMixedContentMode` 显式选择 `OhosMixedContentMode.compatibilityMode` 或 `OhosMixedContentMode.alwaysAllow`。修改策略不会移除已经加载的资源，也不影响直接打开 HTTP 页面。
 
 ## `loadRequest`
 

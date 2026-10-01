@@ -416,6 +416,10 @@ export class OhosWebViewHostApiChannel implements MethodCallHandler {
         this.webSettingsApi.setTextZoom(instanceId, value as number);
         result.success(null);
         return;
+      case 'WebSettings.setMixedContentMode':
+        this.webSettingsApi.setMixedContentMode(instanceId, value as string);
+        result.success(null);
+        return;
       case 'WebSettings.getUserAgentString':
         this.finishPromise(result, this.webSettingsApi.getUserAgentString(instanceId));
         return;

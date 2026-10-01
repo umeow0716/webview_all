@@ -701,6 +701,11 @@ class WebSettings extends OhosObject {
     return api.setAllowFileAccessFromInstance(this, enabled);
   }
 
+  /// Sets the mixed content policy using its channel name.
+  Future<void> setMixedContentMode(String mode) {
+    return api.setMixedContentModeFromInstance(this, mode);
+  }
+
   /// Sets the text zoom of the page in percent.
   ///
   /// The default is 100.

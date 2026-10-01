@@ -41,6 +41,7 @@ class TestWebSettings extends ohos_webview.WebSettings {
     : super.detached(instanceManager: instanceManager);
 
   bool? allowFileAccess;
+  String? mixedContentMode;
   bool? allowFullScreenRotate;
   bool? builtInZoomControls;
   bool? displayZoomControls;
@@ -60,6 +61,11 @@ class TestWebSettings extends ohos_webview.WebSettings {
   Future<void> setAllowFileAccess(bool enabled) async {
     allowFileAccess = enabled;
     await allowFileAccessCompleter?.future;
+  }
+
+  @override
+  Future<void> setMixedContentMode(String mode) async {
+    mixedContentMode = mode;
   }
 
   @override
@@ -421,12 +427,14 @@ void main() {
       displayZoomControls: true,
       builtInZoomControls: false,
       allowFileAccess: true,
+      mixedContentMode: OhosMixedContentMode.compatibilityMode,
       mediaPlaybackRequiresUserGesture: true,
       supportZoom: false,
       textZoom: 125,
     );
 
     expect(controller, isA<OhosWebViewController>());
+    expect(testWebView.settings.mixedContentMode, 'compatibilityMode');
     expect(testWebView.settings.allowFullScreenRotate, isTrue);
     expect(testWebView.settings.domStorageEnabled, isFalse);
     expect(testWebView.settings.javaScriptCanOpenWindowsAutomatically, isFalse);
@@ -450,6 +458,12 @@ void main() {
       instanceManager: instanceManager,
       testWebView: testWebView,
     );
+
+    expect(testWebView.settings.mixedContentMode, 'neverAllow');
+    for (final mode in OhosMixedContentMode.values) {
+      await controller.setMixedContentMode(mode);
+      expect(testWebView.settings.mixedContentMode, mode.name);
+    }
 
     await controller.setAllowFullScreenRotate(true);
     await controller.setDomStorageEnabled(false);
@@ -1895,6 +1909,7 @@ OhosWebViewController _createTestWebViewController({
   bool displayZoomControls = false,
   bool builtInZoomControls = true,
   bool? allowFileAccess,
+  OhosMixedContentMode mixedContentMode = OhosMixedContentMode.neverAllow,
   bool? mediaPlaybackRequiresUserGesture,
   bool? supportZoom,
   int? textZoom,
@@ -1911,6 +1926,7 @@ OhosWebViewController _createTestWebViewController({
       displayZoomControls: displayZoomControls,
       builtInZoomControls: builtInZoomControls,
       allowFileAccess: allowFileAccess,
+      mixedContentMode: mixedContentMode,
       mediaPlaybackRequiresUserGesture: mediaPlaybackRequiresUserGesture,
       supportZoom: supportZoom,
       textZoom: textZoom,
