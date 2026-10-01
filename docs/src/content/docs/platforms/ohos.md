@@ -31,6 +31,7 @@ final params = OhosWebViewControllerCreationParams(
   displayZoomControls: false,
   builtInZoomControls: true,
   allowFileAccess: true,
+  mixedContentMode: OhosMixedContentMode.neverAllow,
   mediaPlaybackRequiresUserGesture: false,
   supportZoom: true,
   textZoom: 100,
@@ -52,12 +53,17 @@ final params = OhosWebViewControllerCreationParams(
 | `setDisplayZoomControls(bool enabled)` | Shows or hides zoom controls. |
 | `setBuiltInZoomControls(bool enabled)` | Enables built-in zoom controls. |
 | `setAllowFileAccess(bool enabled)` | Controls file access. |
+| `setMixedContentMode(OhosMixedContentMode mode)` | Controls mixed HTTP/HTTPS content. |
 | `setSupportZoom(bool support)` | Enables zoom support. |
 | `setMediaPlaybackRequiresUserGesture(bool require)` | Controls media autoplay policy. |
 | `setTextZoom(int textZoom)` | Sets text zoom percentage. |
 | `setOnShowFileSelector(callback)` | Handles file chooser requests. |
 | `setGeolocationPermissionsPromptCallbacks(...)` | Handles geolocation permission prompts. |
 | `setCustomWidgetCallbacks(...)` | Handles fullscreen custom views. |
+
+## Mixed Content
+
+Starting with 1.4.4, HTTPS pages cannot load insecure HTTP resources by default. Serve these resources over HTTPS where possible. If legacy content requires a different policy, explicitly select `OhosMixedContentMode.compatibilityMode` or `OhosMixedContentMode.alwaysAllow` through creation parameters or `setMixedContentMode` before loading the page. Changing the policy does not remove resources already loaded. This setting does not block navigation to HTTP pages.
 
 ## `loadRequest` Behavior
 
