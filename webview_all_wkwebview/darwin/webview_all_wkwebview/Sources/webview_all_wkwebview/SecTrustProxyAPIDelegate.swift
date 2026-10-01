@@ -129,6 +129,8 @@ class SecTrustProxyAPIDelegate: PigeonApiDelegateSecTrust {
   }
 
   // Overridable for testing.
+  @available(iOS, deprecated: 15.0)
+  @available(macOS, deprecated: 12.0)
   internal func secTrustGetCertificateAtIndex(_ trust: SecTrust, _ ix: CFIndex) -> SecCertificate? {
     return SecTrustGetCertificateAtIndex(trust, ix)
   }
