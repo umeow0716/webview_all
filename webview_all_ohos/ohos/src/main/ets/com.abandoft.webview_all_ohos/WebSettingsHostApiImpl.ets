@@ -25,6 +25,9 @@ export interface WebSettings {
   setBuiltInZoomControls(enabled: boolean): void;
   setAllowFileAccess(enabled: boolean): void;
   getAllowFileAccess(): boolean;
+  setMixedContentMode(mode: string): void;
+  getMixedContentMode(): MixedMode;
+  onMixedContentModeChanged(callback?: (mode: MixedMode) => void): void;
   setTextZoom(textZoom: number): void;
   getTextZoom(): number;
   getUserAgentString(): Promise<string>;
@@ -103,6 +106,10 @@ export class WebSettingsHostApiImpl {
 
   setAllowFileAccess(instanceId: number, enabled: boolean): void {
     this.settings(instanceId).setAllowFileAccess(enabled);
+  }
+
+  setMixedContentMode(instanceId: number, mode: string): void {
+    this.settings(instanceId).setMixedContentMode(mode);
   }
 
   setTextZoom(instanceId: number, textZoom: number): void {

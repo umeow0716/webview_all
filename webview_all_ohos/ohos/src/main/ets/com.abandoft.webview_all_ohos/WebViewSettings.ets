@@ -15,6 +15,8 @@ export class WebViewSettings implements WebSettings {
   private overviewModeEnabled: boolean = false;
   private wideViewportEnabled: boolean = false;
   private fileAccessEnabled: boolean = true;
+  private mixedContentMode: MixedMode = MixedMode.None;
+  private mixedContentModeCallback?: (mode: MixedMode) => void;
   private textZoomRatio: number = 0;
   private textZoomCallback?: (ratio: number) => void;
   private fullScreenRotateEnabled: boolean = false;
@@ -113,6 +115,31 @@ export class WebViewSettings implements WebSettings {
 
   getAllowFileAccess(): boolean {
     return this.fileAccessEnabled;
+  }
+
+  setMixedContentMode(mode: string): void {
+    switch (mode) {
+      case 'neverAllow':
+        this.mixedContentMode = MixedMode.None;
+        break;
+      case 'alwaysAllow':
+        this.mixedContentMode = MixedMode.All;
+        break;
+      case 'compatibilityMode':
+        this.mixedContentMode = MixedMode.Compatible;
+        break;
+      default:
+        throw new Error('Invalid mixed content mode.');
+    }
+    this.mixedContentModeCallback?.(this.mixedContentMode);
+  }
+
+  getMixedContentMode(): MixedMode {
+    return this.mixedContentMode;
+  }
+
+  onMixedContentModeChanged(callback?: (mode: MixedMode) => void): void {
+    this.mixedContentModeCallback = callback;
   }
 
   setTextZoom(textZoom: number): void {

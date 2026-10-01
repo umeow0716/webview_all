@@ -653,6 +653,13 @@ class WebSettingsHostApiImpl extends WebSettingsHostApi {
     );
   }
 
+  Future<void> setMixedContentModeFromInstance(
+    WebSettings instance,
+    String mode,
+  ) {
+    return setMixedContentMode(instanceManager.getIdentifier(instance)!, mode);
+  }
+
   /// Helper method to convert instances ids to objects.
   Future<String> getUserAgentStringFromInstance(WebSettings instance) {
     return getUserAgentString(instanceManager.getIdentifier(instance)!);

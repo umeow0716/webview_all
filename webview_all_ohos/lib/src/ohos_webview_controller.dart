@@ -67,6 +67,18 @@ void _runOhosAsyncCallbackSafely(
   );
 }
 
+/// Controls whether HTTPS pages may load insecure HTTP resources on OHOS.
+enum OhosMixedContentMode {
+  /// Blocks mixed content. This is the default and recommended mode.
+  neverAllow,
+
+  /// Allows mixed content. Only use when required by trusted legacy content.
+  alwaysAllow,
+
+  /// Lets ArkWeb decide which types of mixed content are allowed.
+  compatibilityMode,
+}
+
 /// Object specifying creation parameters for creating a [OhosWebViewController].
 ///
 /// When adding additional fields make sure they can be null or have a default
@@ -86,6 +98,7 @@ class OhosWebViewControllerCreationParams
     this.displayZoomControls = false,
     this.builtInZoomControls = true,
     this.allowFileAccess,
+    this.mixedContentMode = OhosMixedContentMode.neverAllow,
     this.mediaPlaybackRequiresUserGesture,
     this.supportZoom,
     this.textZoom,
@@ -108,6 +121,7 @@ class OhosWebViewControllerCreationParams
     bool displayZoomControls = false,
     bool builtInZoomControls = true,
     bool? allowFileAccess,
+    OhosMixedContentMode mixedContentMode = OhosMixedContentMode.neverAllow,
     bool? mediaPlaybackRequiresUserGesture,
     bool? supportZoom,
     int? textZoom,
@@ -126,6 +140,7 @@ class OhosWebViewControllerCreationParams
       displayZoomControls: displayZoomControls,
       builtInZoomControls: builtInZoomControls,
       allowFileAccess: allowFileAccess,
+      mixedContentMode: mixedContentMode,
       mediaPlaybackRequiresUserGesture: mediaPlaybackRequiresUserGesture,
       supportZoom: supportZoom,
       textZoom: textZoom,
@@ -162,6 +177,11 @@ class OhosWebViewControllerCreationParams
   ///
   /// When null, the platform default is left unchanged.
   final bool? allowFileAccess;
+
+  /// Whether HTTPS pages may load insecure HTTP resources.
+  ///
+  /// Defaults to [OhosMixedContentMode.neverAllow].
+  final OhosMixedContentMode mixedContentMode;
 
   /// Whether media playback requires a user gesture.
   ///
@@ -238,6 +258,7 @@ class OhosWebViewController extends PlatformWebViewController {
     if (creationParams.allowFileAccess case final bool enabled) {
       _webView.settings.setAllowFileAccess(enabled);
     }
+    _webView.settings.setMixedContentMode(creationParams.mixedContentMode.name);
     if (creationParams.mediaPlaybackRequiresUserGesture
         case final bool require) {
       _webView.settings.setMediaPlaybackRequiresUserGesture(require);
@@ -1089,6 +1110,14 @@ ${params.functionBody}
   /// Enables or disables file access within WebView.
   Future<void> setAllowFileAccess(bool enabled) {
     return _webView.settings.setAllowFileAccess(enabled);
+  }
+
+  /// Sets whether HTTPS pages may load insecure HTTP resources.
+  ///
+  /// Defaults to [OhosMixedContentMode.neverAllow]. Set before loading a page;
+  /// changing the mode does not remove content that has already been loaded.
+  Future<void> setMixedContentMode(OhosMixedContentMode mode) {
+    return _webView.settings.setMixedContentMode(mode.name);
   }
 
   /// Sets whether the WebView should support zooming.

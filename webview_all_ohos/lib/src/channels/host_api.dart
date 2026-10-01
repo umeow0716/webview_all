@@ -383,6 +383,9 @@ class WebSettingsHostApi {
   Future<void> setAllowFileAccess(int instanceId, bool enabled) =>
       _setting('setAllowFileAccess', instanceId, enabled);
 
+  Future<void> setMixedContentMode(int instanceId, String mode) =>
+      _setting('setMixedContentMode', instanceId, mode);
+
   Future<void> setTextZoom(int instanceId, int textZoom) =>
       _setting('setTextZoom', instanceId, textZoom);
 
