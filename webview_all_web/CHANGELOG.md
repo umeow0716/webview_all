@@ -1,3 +1,8 @@
+## 1.4.4
+
+* Fix a certificate API deprecation warning when building for iOS and macOS.
+* Block HTTP resources on HTTPS pages by default on OHOS.
+
 ## 1.4.3
 
 * Fix the soft keyboard not appearing in some Canvas-based web apps on Android.
