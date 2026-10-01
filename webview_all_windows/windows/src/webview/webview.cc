@@ -7,6 +7,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <utility>
 
 #include <winrt/Windows.Foundation.h>
@@ -191,6 +192,125 @@ bool CreateNativeCookie(ICoreWebView2CookieManager *cookie_manager,
     return false;
   }
   return ApplyCookieProperties(native_cookie.get(), cookie);
+}
+
+
+std::string ToLowerAscii(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return value;
+}
+
+bool ContainsAsciiCaseInsensitive(const std::string &text,
+                                  const std::string &needle) {
+  return ToLowerAscii(text).find(ToLowerAscii(needle)) != std::string::npos;
+}
+
+std::optional<std::string>
+FindHeaderCaseInsensitive(const std::map<std::string, std::string> &headers,
+                          const std::string &name) {
+  const std::string expected = ToLowerAscii(name);
+  for (const auto &entry : headers) {
+    if (ToLowerAscii(entry.first) == expected) {
+      return entry.second;
+    }
+  }
+  return std::nullopt;
+}
+
+std::string TrimAsciiWhitespace(std::string value) {
+  const auto is_space = [](unsigned char c) { return std::isspace(c) != 0; };
+  value.erase(value.begin(),
+              std::find_if(value.begin(), value.end(),
+                           [&](char c) { return !is_space(c); }));
+  value.erase(std::find_if(value.rbegin(), value.rend(),
+                           [&](char c) { return !is_space(c); })
+                  .base(),
+              value.end());
+  return value;
+}
+
+std::string CookieNamesForDebugLog(const std::string &cookie_header) {
+  std::vector<std::string> names;
+  std::stringstream stream(cookie_header);
+  std::string part;
+  while (std::getline(stream, part, ';')) {
+    part = TrimAsciiWhitespace(part);
+    if (part.empty()) {
+      continue;
+    }
+    const size_t separator = part.find('=');
+    if (separator == std::string::npos || separator == 0) {
+      continue;
+    }
+    names.push_back(part.substr(0, separator));
+  }
+
+  if (names.empty()) {
+    return "<none>";
+  }
+
+  std::string result;
+  for (size_t i = 0; i < names.size(); ++i) {
+    if (i > 0) {
+      result.append(",");
+    }
+    result.append(names[i]);
+  }
+  return result;
+}
+
+bool ShouldLogPortalRequestHeaders(const std::string &url) {
+  return ContainsAsciiCaseInsensitive(url, "nportal.ntut.edu.tw") ||
+         ContainsAsciiCaseInsensitive(url, "aps.ntut.edu.tw") ||
+         ContainsAsciiCaseInsensitive(url, "aps-stu.ntut.edu.tw");
+}
+
+void LogPortalRequestHeaders(ICoreWebView2WebResourceRequest *request) {
+  if (request == nullptr) {
+    return;
+  }
+
+  wil::unique_cotaskmem_string wuri;
+  if (FAILED(request->get_Uri(&wuri)) || wuri == nullptr) {
+    return;
+  }
+  const std::string url = util::Utf8FromUtf16(wuri.get());
+  if (!ShouldLogPortalRequestHeaders(url)) {
+    return;
+  }
+
+  std::string method;
+  wil::unique_cotaskmem_string wmethod;
+  if (SUCCEEDED(request->get_Method(&wmethod)) && wmethod != nullptr) {
+    method = util::Utf8FromUtf16(wmethod.get());
+  }
+
+  std::map<std::string, std::string> request_headers;
+  wil::com_ptr<ICoreWebView2HttpRequestHeaders> native_request_headers;
+  if (SUCCEEDED(request->get_Headers(native_request_headers.put()))) {
+    request_headers = ReadHttpHeaders(native_request_headers.get());
+  }
+
+  const std::optional<std::string> cookie_header =
+      FindHeaderCaseInsensitive(request_headers, "Cookie");
+  const std::optional<std::string> user_agent_header =
+      FindHeaderCaseInsensitive(request_headers, "User-Agent");
+
+  std::ostringstream message;
+  message << "[WebView2Request] " << (method.empty() ? "<method?>" : method)
+          << " " << url << " cookieHeader="
+          << (cookie_header.has_value() ? "present" : "missing")
+          << " cookieLength="
+          << (cookie_header.has_value() ? cookie_header->size() : 0)
+          << " cookieNames="
+          << (cookie_header.has_value()
+                  ? CookieNamesForDebugLog(cookie_header.value())
+                  : "<none>")
+          << " userAgent="
+          << (user_agent_header.has_value() ? user_agent_header.value()
+                                            : "<missing>");
+  util::LogWarning(message.str());
 }
 
 std::string CanonicalizeNavigationUrl(const std::string &url) {
@@ -452,6 +572,26 @@ void Webview::RegisterEventHandlers() {
           })
           .Get(),
       &event_registrations_.navigation_completed_token_);
+
+  if (SUCCEEDED(webview_->AddWebResourceRequestedFilter(
+          L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL))) {
+    webview_->add_WebResourceRequested(
+        Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+            [](ICoreWebView2 *sender,
+               ICoreWebView2WebResourceRequestedEventArgs *args) -> HRESULT {
+              if (args == nullptr) {
+                return S_OK;
+              }
+
+              wil::com_ptr<ICoreWebView2WebResourceRequest> request;
+              if (SUCCEEDED(args->get_Request(request.put())) && request) {
+                LogPortalRequestHeaders(request.get());
+              }
+              return S_OK;
+            })
+            .Get(),
+        &event_registrations_.web_resource_requested_token_);
+  }
 
   auto webview2 = webview_.try_query<ICoreWebView2_2>();
   if (webview2) {

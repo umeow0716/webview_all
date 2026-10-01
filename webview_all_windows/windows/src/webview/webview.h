@@ -147,6 +147,7 @@ struct EventRegistrations {
   EventRegistrationToken lost_focus_token_{};
   EventRegistrationToken move_focus_requested_token_{};
   EventRegistrationToken web_message_received_token_{};
+  EventRegistrationToken web_resource_requested_token_{};
   EventRegistrationToken web_resource_response_received_token_{};
   EventRegistrationToken basic_authentication_requested_token_{};
   EventRegistrationToken server_certificate_error_detected_token_{};
