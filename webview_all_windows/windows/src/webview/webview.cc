@@ -313,6 +313,84 @@ void LogPortalRequestHeaders(ICoreWebView2WebResourceRequest *request) {
   util::LogWarning(message.str());
 }
 
+std::string HeaderNamesForDebugLog(
+    const std::map<std::string, std::string> &headers) {
+  if (headers.empty()) {
+    return "<none>";
+  }
+
+  std::string result;
+  for (const auto &entry : headers) {
+    if (!result.empty()) {
+      result.append(",");
+    }
+    result.append(entry.first);
+  }
+  return result;
+}
+
+void LogPortalResponseHeaders(ICoreWebView2WebResourceRequest *request,
+                              ICoreWebView2WebResourceResponseView *response) {
+  if (request == nullptr || response == nullptr) {
+    return;
+  }
+
+  wil::unique_cotaskmem_string wuri;
+  if (FAILED(request->get_Uri(&wuri)) || wuri == nullptr) {
+    return;
+  }
+  const std::string url = util::Utf8FromUtf16(wuri.get());
+  if (!ShouldLogPortalRequestHeaders(url)) {
+    return;
+  }
+
+  std::string method;
+  wil::unique_cotaskmem_string wmethod;
+  if (SUCCEEDED(request->get_Method(&wmethod)) && wmethod != nullptr) {
+    method = util::Utf8FromUtf16(wmethod.get());
+  }
+
+  int status_code = 0;
+  response->get_StatusCode(&status_code);
+
+  std::optional<std::string> reason_phrase;
+  wil::unique_cotaskmem_string wreason_phrase;
+  if (SUCCEEDED(response->get_ReasonPhrase(&wreason_phrase)) &&
+      wreason_phrase != nullptr) {
+    reason_phrase = util::Utf8FromUtf16(wreason_phrase.get());
+  }
+
+  std::map<std::string, std::string> response_headers;
+  wil::com_ptr<ICoreWebView2HttpResponseHeaders> native_response_headers;
+  if (SUCCEEDED(response->get_Headers(native_response_headers.put()))) {
+    response_headers = ReadHttpHeaders(native_response_headers.get());
+  }
+
+  const std::optional<std::string> location =
+      FindHeaderCaseInsensitive(response_headers, "Location");
+  const std::optional<std::string> content_type =
+      FindHeaderCaseInsensitive(response_headers, "Content-Type");
+  const std::optional<std::string> refresh =
+      FindHeaderCaseInsensitive(response_headers, "Refresh");
+  const std::optional<std::string> set_cookie =
+      FindHeaderCaseInsensitive(response_headers, "Set-Cookie");
+
+  std::ostringstream message;
+  message << "[WebView2Response] " << (method.empty() ? "<method?>" : method)
+          << " " << url << " status=" << status_code << " reason="
+          << (reason_phrase.has_value() ? reason_phrase.value() : "<missing>")
+          << " location="
+          << (location.has_value() ? location.value() : "<missing>")
+          << " refresh="
+          << (refresh.has_value() ? refresh.value() : "<missing>")
+          << " contentType="
+          << (content_type.has_value() ? content_type.value() : "<missing>")
+          << " setCookie="
+          << (set_cookie.has_value() ? "present" : "missing")
+          << " responseHeaderNames=" << HeaderNamesForDebugLog(response_headers);
+  util::LogWarning(message.str());
+}
+
 std::string CanonicalizeNavigationUrl(const std::string &url) {
   try {
     const winrt::Windows::Foundation::Uri uri(winrt::to_hstring(url));
@@ -600,23 +678,25 @@ void Webview::RegisterEventHandlers() {
             [this](ICoreWebView2 *sender,
                    ICoreWebView2WebResourceResponseReceivedEventArgs *args)
                 -> HRESULT {
-              if (!http_response_error_callback_) {
+              wil::com_ptr<ICoreWebView2WebResourceResponseView> response;
+              if (FAILED(args->get_Response(response.put())) || !response) {
                 return S_OK;
               }
 
-              wil::com_ptr<ICoreWebView2WebResourceResponseView> response;
-              if (FAILED(args->get_Response(response.put())) || !response) {
+              wil::com_ptr<ICoreWebView2WebResourceRequest> request;
+              if (FAILED(args->get_Request(request.put())) || !request) {
+                return S_OK;
+              }
+
+              LogPortalResponseHeaders(request.get(), response.get());
+
+              if (!http_response_error_callback_) {
                 return S_OK;
               }
 
               int status_code = 0;
               if (FAILED(response->get_StatusCode(&status_code)) ||
                   status_code < 400) {
-                return S_OK;
-              }
-
-              wil::com_ptr<ICoreWebView2WebResourceRequest> request;
-              if (FAILED(args->get_Request(request.put())) || !request) {
                 return S_OK;
               }
 
