@@ -9,6 +9,7 @@
 #include <memory>
 #include <sstream>
 #include <utility>
+#include <vector>
 
 #include <winrt/Windows.Foundation.h>
 
@@ -313,6 +314,120 @@ void LogPortalRequestHeaders(ICoreWebView2WebResourceRequest *request) {
   util::LogWarning(message.str());
 }
 
+constexpr size_t kPortalResponseBodyLogLimit = 8192;
+
+bool ShouldLogPortalResponseBody(const std::string &url) {
+  return ContainsAsciiCaseInsensitive(url,
+                                      "nportal.ntut.edu.tw/ssoIndex.do");
+}
+
+std::string ReadStreamPrefixForDebugLog(IStream *stream, size_t limit) {
+  if (stream == nullptr || limit == 0) {
+    return {};
+  }
+
+  std::string result;
+  result.reserve((std::min)(limit, static_cast<size_t>(4096)));
+
+  char buffer[2048];
+  while (result.size() < limit) {
+    const size_t remaining = limit - result.size();
+    const ULONG to_read = static_cast<ULONG>(
+        (std::min)(remaining, static_cast<size_t>(sizeof(buffer))));
+    ULONG bytes_read = 0;
+    const HRESULT hr = stream->Read(buffer, to_read, &bytes_read);
+    if (FAILED(hr) || bytes_read == 0) {
+      break;
+    }
+    result.append(buffer, buffer + bytes_read);
+  }
+
+  return result;
+}
+
+std::string CompactForSingleLineDebugLog(std::string value, size_t limit) {
+  for (char &ch : value) {
+    if (ch == '\r' || ch == '\n' || ch == '\t') {
+      ch = ' ';
+    }
+  }
+
+  std::string compact;
+  compact.reserve((std::min)(value.size(), limit));
+  bool last_was_space = false;
+  for (char ch : value) {
+    const bool is_space = std::isspace(static_cast<unsigned char>(ch)) != 0;
+    if (is_space) {
+      if (!last_was_space && !compact.empty()) {
+        compact.push_back(' ');
+      }
+      last_was_space = true;
+      continue;
+    }
+    compact.push_back(ch);
+    last_was_space = false;
+    if (compact.size() >= limit) {
+      compact.append("...");
+      break;
+    }
+  }
+  return compact;
+}
+
+void LogPortalResponseBodyAsync(const std::string &method, const std::string &url,
+                                int status_code,
+                                ICoreWebView2WebResourceResponseView *response) {
+  if (response == nullptr || !ShouldLogPortalResponseBody(url)) {
+    return;
+  }
+
+  response->GetContent(
+      Callback<ICoreWebView2WebResourceResponseViewGetContentCompletedHandler>(
+          [method, url, status_code](HRESULT error_code, IStream *stream)
+              -> HRESULT {
+            if (FAILED(error_code) || stream == nullptr) {
+              std::ostringstream error_message;
+              error_message << "[WebView2ResponseBody] "
+                            << (method.empty() ? "<method?>" : method) << " "
+                            << url << " status=" << status_code
+                            << " readError=0x" << std::hex << error_code;
+              util::LogWarning(error_message.str());
+              return S_OK;
+            }
+
+            const std::string body = ReadStreamPrefixForDebugLog(
+                stream, kPortalResponseBodyLogLimit);
+            const std::string compact =
+                CompactForSingleLineDebugLog(body, 2400);
+
+            std::ostringstream message;
+            message << "[WebView2ResponseBody] "
+                    << (method.empty() ? "<method?>" : method) << " " << url
+                    << " status=" << status_code << " bytesRead="
+                    << body.size() << " hasForm="
+                    << (ContainsAsciiCaseInsensitive(body, "<form") ? "true"
+                                                                  : "false")
+                    << " hasOauth2Server="
+                    << (ContainsAsciiCaseInsensitive(body, "oauth2Server.do")
+                            ? "true"
+                            : "false")
+                    << " hasClientId="
+                    << (ContainsAsciiCaseInsensitive(body, "client_id")
+                            ? "true"
+                            : "false")
+                    << " hasSubmit="
+                    << (ContainsAsciiCaseInsensitive(body, "submit") ? "true"
+                                                                   : "false")
+                    << " hasLocation="
+                    << (ContainsAsciiCaseInsensitive(body, "location") ? "true"
+                                                                     : "false")
+                    << " body=" << compact;
+            util::LogWarning(message.str());
+            return S_OK;
+          })
+          .Get());
+}
+
 std::string HeaderNamesForDebugLog(
     const std::map<std::string, std::string> &headers) {
   if (headers.empty()) {
@@ -389,6 +504,7 @@ void LogPortalResponseHeaders(ICoreWebView2WebResourceRequest *request,
           << (set_cookie.has_value() ? "present" : "missing")
           << " responseHeaderNames=" << HeaderNamesForDebugLog(response_headers);
   util::LogWarning(message.str());
+  LogPortalResponseBodyAsync(method, url, status_code, response);
 }
 
 std::string CanonicalizeNavigationUrl(const std::string &url) {
