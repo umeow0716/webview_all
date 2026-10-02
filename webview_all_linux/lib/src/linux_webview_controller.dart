@@ -410,7 +410,21 @@ class LinuxWebViewController extends PlatformWebViewController {
   Future<void> setPlatformNavigationDelegate(
     PlatformNavigationDelegate handler,
   ) async {
+    _navigationDelegate?.setCapabilitiesChangedCallback(null);
     _navigationDelegate = handler as LinuxNavigationDelegate;
+    _navigationDelegate!.setCapabilitiesChangedCallback(
+      _syncNavigationDelegateCapabilities,
+    );
+    await _syncNavigationDelegateCapabilities();
+  }
+
+  Future<void> _syncNavigationDelegateCapabilities() {
+    final LinuxNavigationDelegate? delegate = _navigationDelegate;
+    return _invoke<void>('setNavigationDelegateCapabilities', <String, Object?>{
+      'navigationRequest': delegate?.hasNavigationRequestHandler ?? false,
+      'httpAuth': delegate?.hasHttpAuthRequestHandler ?? false,
+      'sslAuth': delegate?.hasSslAuthErrorHandler ?? false,
+    });
   }
 
   @override
@@ -681,6 +695,9 @@ class LinuxWebViewController extends PlatformWebViewController {
     void Function(PlatformWebViewPermissionRequest request) onPermissionRequest,
   ) async {
     _onPermissionRequest = onPermissionRequest;
+    await _invoke<void>('setPermissionCallbackEnabled', <String, Object?>{
+      'enabled': true,
+    });
   }
 
   @override
@@ -914,6 +931,7 @@ class LinuxWebViewController extends PlatformWebViewController {
     _eventSubscription = null;
     _javaScriptChannels.clear();
     _userScriptIdentifiers.clear();
+    _navigationDelegate?.setCapabilitiesChangedCallback(null);
     _navigationDelegate = null;
     _onConsoleMessage = null;
     _onScrollPositionChange = null;

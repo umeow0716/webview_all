@@ -129,11 +129,20 @@ static void script_finished_cb(GObject *object, GAsyncResult *result,
   g_object_unref(method_call);
 }
 
+static LinuxWebView *linux_webview_from_owner(WebKitWebView *web_view) {
+  if (web_view == nullptr) {
+    return nullptr;
+  }
+  return static_cast<LinuxWebView *>(
+      g_object_get_data(G_OBJECT(web_view), kLinuxWebViewInstanceKey));
+}
+
 void console_message_received_cb(WebKitUserContentManager *manager,
                                  WebKitJavascriptResult *result,
                                  gpointer user_data) {
-  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
-  if (!webview->console_enabled) {
+  LinuxWebView *webview =
+      linux_webview_from_owner(WEBKIT_WEB_VIEW(user_data));
+  if (webview == nullptr || !webview->console_enabled) {
     return;
   }
 
@@ -153,8 +162,9 @@ void console_message_received_cb(WebKitUserContentManager *manager,
 void scroll_message_received_cb(WebKitUserContentManager *manager,
                                 WebKitJavascriptResult *result,
                                 gpointer user_data) {
-  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
-  if (!webview->scroll_enabled) {
+  LinuxWebView *webview =
+      linux_webview_from_owner(WEBKIT_WEB_VIEW(user_data));
+  if (webview == nullptr || !webview->scroll_enabled) {
     return;
   }
 
@@ -186,7 +196,11 @@ void scroll_message_received_cb(WebKitUserContentManager *manager,
 void async_javascript_message_received_cb(WebKitUserContentManager *manager,
                                           WebKitJavascriptResult *result,
                                           gpointer user_data) {
-  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
+  LinuxWebView *webview =
+      linux_webview_from_owner(WEBKIT_WEB_VIEW(user_data));
+  if (webview == nullptr) {
+    return;
+  }
   JSCValue *js_value = webkit_javascript_result_get_js_value(result);
   gchar *text = jsc_value_to_string(js_value);
   if (text == nullptr) {
@@ -204,7 +218,16 @@ void javascript_channel_message_received_cb(WebKitUserContentManager *manager,
                                             gpointer user_data) {
   JavaScriptChannelHandlerData *data =
       static_cast<JavaScriptChannelHandlerData *>(user_data);
-  LinuxWebView *webview = data->webview;
+  GObject *owner =
+      static_cast<GObject *>(g_weak_ref_get(&data->web_view));
+  if (owner == nullptr) {
+    return;
+  }
+  LinuxWebView *webview = linux_webview_from_owner(WEBKIT_WEB_VIEW(owner));
+  if (webview == nullptr) {
+    g_object_unref(owner);
+    return;
+  }
   JSCValue *js_value = webkit_javascript_result_get_js_value(result);
   gchar *text = jsc_value_to_string(js_value);
   FlValue *event = make_event("javaScriptChannelMessage");
@@ -215,6 +238,7 @@ void javascript_channel_message_received_cb(WebKitUserContentManager *manager,
                            fl_value_new_string(text != nullptr ? text : ""));
   send_event(webview, event);
   g_free(text);
+  g_object_unref(owner);
 }
 
 void destroy_js_channel_handler_data(gpointer data, GClosure *closure) {
@@ -223,6 +247,7 @@ void destroy_js_channel_handler_data(gpointer data, GClosure *closure) {
   if (handler_data == nullptr) {
     return;
   }
+  g_weak_ref_clear(&handler_data->web_view);
   g_free(handler_data->name);
   g_free(handler_data);
 }
@@ -232,6 +257,53 @@ void evaluate_javascript(WebKitWebView *web_view, const gchar *script,
   g_object_ref(method_call);
   webkit_web_view_evaluate_javascript(web_view, script, -1, nullptr, nullptr,
                                       nullptr, script_finished_cb, method_call);
+}
+
+const gchar *console_hook_script() {
+  return R"(
+    (function() {
+      if (window.__webviewAllConsoleHookInstalled) return;
+      window.__webviewAllConsoleHookInstalled = true;
+      function stringifyArg(arg) {
+        if (typeof arg === 'string') {
+          return arg;
+        }
+        try {
+          const json = JSON.stringify(arg);
+          return json === undefined ? String(arg) : json;
+        } catch (_) {
+          return String(arg);
+        }
+      }
+      ['log', 'info', 'warn', 'error', 'debug'].forEach(function(level) {
+        const original = console[level];
+        console[level] = function() {
+          try {
+            window.webkit.messageHandlers.__webview_all_console.postMessage(
+              Array.from(arguments).map(stringifyArg).join(' ')
+            );
+          } catch (_) {}
+          if (original) original.apply(console, arguments);
+        };
+      });
+    })();
+  )";
+}
+
+const gchar *scroll_hook_script() {
+  return R"(
+    (function() {
+      if (window.__webviewAllScrollHookInstalled) return;
+      window.__webviewAllScrollHookInstalled = true;
+      window.addEventListener('scroll', function() {
+        try {
+          window.webkit.messageHandlers.__webview_all_scroll.postMessage(
+            [window.scrollX || 0, window.scrollY || 0].join(',')
+          );
+        } catch (_) {}
+      }, { passive: true });
+    })();
+  )";
 }
 
 static void add_user_script(WebKitUserContentManager *manager,
@@ -313,56 +385,27 @@ gchar *build_overscroll_style_script(LinuxWebView *webview) {
 void rebuild_user_scripts(LinuxWebView *webview) {
   webkit_user_content_manager_remove_all_scripts(webview->content_manager);
 
-  gchar *scrollbar_script = build_scrollbar_style_script(webview);
-  add_user_script(webview->content_manager, scrollbar_script);
-  g_free(scrollbar_script);
+  if (!webview->vertical_scrollbar_enabled ||
+      !webview->horizontal_scrollbar_enabled) {
+    gchar *scrollbar_script = build_scrollbar_style_script(webview);
+    add_user_script(webview->content_manager, scrollbar_script);
+    g_free(scrollbar_script);
+  }
 
-  gchar *overscroll_script = build_overscroll_style_script(webview);
-  add_user_script(webview->content_manager, overscroll_script);
-  g_free(overscroll_script);
+  if (webview->over_scroll_behavior != nullptr &&
+      *webview->over_scroll_behavior != '\0') {
+    gchar *overscroll_script = build_overscroll_style_script(webview);
+    add_user_script(webview->content_manager, overscroll_script);
+    g_free(overscroll_script);
+  }
 
-  add_user_script(webview->content_manager, R"(
-    (function() {
-      if (window.__webviewAllConsoleHookInstalled) return;
-      window.__webviewAllConsoleHookInstalled = true;
-      function stringifyArg(arg) {
-        if (typeof arg === 'string') {
-          return arg;
-        }
-        try {
-          const json = JSON.stringify(arg);
-          return json === undefined ? String(arg) : json;
-        } catch (_) {
-          return String(arg);
-        }
-      }
-      ['log', 'info', 'warn', 'error', 'debug'].forEach(function(level) {
-        const original = console[level];
-        console[level] = function() {
-          try {
-            window.webkit.messageHandlers.__webview_all_console.postMessage(
-              Array.from(arguments).map(stringifyArg).join(' ')
-            );
-          } catch (_) {}
-          if (original) original.apply(console, arguments);
-        };
-      });
-    })();
-  )");
+  if (webview->console_enabled) {
+    add_user_script(webview->content_manager, console_hook_script());
+  }
 
-  add_user_script(webview->content_manager, R"(
-    (function() {
-      if (window.__webviewAllScrollHookInstalled) return;
-      window.__webviewAllScrollHookInstalled = true;
-      window.addEventListener('scroll', function() {
-        try {
-          window.webkit.messageHandlers.__webview_all_scroll.postMessage(
-            [window.scrollX || 0, window.scrollY || 0].join(',')
-          );
-        } catch (_) {}
-      }, { passive: true });
-    })();
-  )");
+  if (webview->scroll_enabled) {
+    add_user_script(webview->content_manager, scroll_hook_script());
+  }
 
   GHashTableIter iter;
   gpointer key = nullptr;

@@ -82,7 +82,6 @@ static void destroy_pending_navigation_decision(gpointer data) {
     return;
   }
   g_clear_object(&pending->decision);
-  g_free(pending->uri);
   g_free(pending);
 }
 
@@ -268,21 +267,142 @@ void use_navigation_decision(LinuxWebView *webview,
 
 static WebKitWebView *
 create_web_view_cb(WebKitWebView *widget,
-                   WebKitNavigationAction *navigation_action, gpointer) {
-  WebKitURIRequest *request =
-      webkit_navigation_action_get_request(navigation_action);
-  const gchar *uri =
-      request == nullptr ? nullptr : webkit_uri_request_get_uri(request);
-  if (uri != nullptr && *uri != '\0') {
-    webkit_web_view_load_uri(widget, uri);
+                   WebKitNavigationAction *navigation_action, gpointer);
+static void web_process_terminated_cb(WebKitWebView *,
+                                      WebKitWebProcessTerminationReason,
+                                      gpointer);
+
+static void popup_window_destroy_cb(GtkWidget *window, gpointer user_data) {
+  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
+  if (webview == nullptr || webview->popup_windows == nullptr) {
+    return;
   }
-  return nullptr;
+  g_ptr_array_remove(webview->popup_windows, window);
+}
+
+static void destroy_popup_windows(LinuxWebView *webview) {
+  if (webview == nullptr || webview->popup_windows == nullptr) {
+    return;
+  }
+  while (webview->popup_windows->len > 0) {
+    const guint index = webview->popup_windows->len - 1;
+    GtkWidget *window =
+        GTK_WIDGET(g_ptr_array_index(webview->popup_windows, index));
+    gtk_widget_destroy(window);
+    // The destroy callback normally removes the window. Avoid an infinite loop
+    // if a foreign handler stopped or altered destruction unexpectedly.
+    if (webview->popup_windows->len > index &&
+        g_ptr_array_index(webview->popup_windows, index) == window) {
+      g_ptr_array_remove_index(webview->popup_windows, index);
+    }
+  }
+}
+
+static void popup_web_view_close_cb(WebKitWebView *, gpointer user_data) {
+  GtkWidget *window = GTK_WIDGET(user_data);
+  if (GTK_IS_WIDGET(window)) {
+    gtk_widget_destroy(window);
+  }
+}
+
+static gboolean popup_window_delete_event_cb(GtkWidget *, GdkEvent *,
+                                              gpointer user_data) {
+  webkit_web_view_try_close(WEBKIT_WEB_VIEW(user_data));
+  return TRUE;
+}
+
+static void popup_web_view_run_as_modal_cb(WebKitWebView *,
+                                           gpointer user_data) {
+  gtk_window_set_modal(GTK_WINDOW(user_data), TRUE);
+}
+
+static void popup_web_view_title_changed_cb(WebKitWebView *web_view,
+                                            GParamSpec *, gpointer user_data) {
+  const gchar *title = webkit_web_view_get_title(web_view);
+  gtk_window_set_title(GTK_WINDOW(user_data),
+                       title != nullptr && *title != '\0' ? title : "WebView");
+}
+
+static void popup_web_view_ready_to_show_cb(WebKitWebView *web_view,
+                                            gpointer user_data) {
+  GtkWindow *window = GTK_WINDOW(user_data);
+  WebKitWindowProperties *properties =
+      webkit_web_view_get_window_properties(web_view);
+  GdkRectangle geometry = {0, 0, 0, 0};
+  webkit_window_properties_get_geometry(properties, &geometry);
+  if (geometry.x >= 0 && geometry.y >= 0) {
+    gtk_window_move(window, geometry.x, geometry.y);
+  }
+  if (geometry.width > 0 && geometry.height > 0) {
+    gtk_window_resize(window, geometry.width, geometry.height);
+  }
+  gtk_window_set_resizable(
+      window, webkit_window_properties_get_resizable(properties));
+  popup_web_view_title_changed_cb(web_view, nullptr, window);
+  gtk_widget_show_all(GTK_WIDGET(window));
+  gtk_widget_grab_focus(GTK_WIDGET(web_view));
+}
+
+static WebKitWebView *
+create_web_view_cb(WebKitWebView *widget,
+                   WebKitNavigationAction *navigation_action,
+                   gpointer user_data) {
+  (void)navigation_action;
+  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
+  if (webview == nullptr || webview->popup_windows == nullptr) {
+    return nullptr;
+  }
+
+  // WebKit requires a newly-created related view here. Navigating the source
+  // view from inside the synchronous "create" callback is re-entrant and also
+  // destroys window.open/target=_blank browsing-context semantics.
+  WebKitWebView *popup = WEBKIT_WEB_VIEW(
+      webkit_web_view_new_with_related_view(widget));
+  GtkWidget *window_widget = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  g_ptr_array_add(webview->popup_windows, window_widget);
+  g_signal_connect(window_widget, "destroy",
+                   G_CALLBACK(popup_window_destroy_cb), webview);
+
+  GtkWindow *window = GTK_WINDOW(window_widget);
+  gtk_window_set_default_size(window, 900, 700);
+  gtk_window_set_destroy_with_parent(window, TRUE);
+
+  GtkWidget *source_toplevel = gtk_widget_get_toplevel(GTK_WIDGET(widget));
+  if (GTK_IS_WINDOW(source_toplevel)) {
+    GtkWindow *source_window = GTK_WINDOW(source_toplevel);
+    gtk_window_set_transient_for(window, source_window);
+    GtkApplication *application = gtk_window_get_application(source_window);
+    if (application != nullptr) {
+      gtk_window_set_application(window, application);
+    }
+  }
+
+  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(popup));
+  g_signal_connect_object(popup, "ready-to-show",
+                          G_CALLBACK(popup_web_view_ready_to_show_cb),
+                          window_widget, G_CONNECT_DEFAULT);
+  g_signal_connect_object(popup, "notify::title",
+                          G_CALLBACK(popup_web_view_title_changed_cb),
+                          window_widget, G_CONNECT_DEFAULT);
+  g_signal_connect_object(popup, "close", G_CALLBACK(popup_web_view_close_cb),
+                          window_widget, G_CONNECT_DEFAULT);
+  g_signal_connect_object(popup, "run-as-modal",
+                          G_CALLBACK(popup_web_view_run_as_modal_cb),
+                          window_widget, G_CONNECT_DEFAULT);
+  g_signal_connect(popup, "create", G_CALLBACK(create_web_view_cb), webview);
+  g_signal_connect(popup, "web-process-terminated",
+                   G_CALLBACK(web_process_terminated_cb), webview);
+  g_signal_connect_object(window_widget, "delete-event",
+                          G_CALLBACK(popup_window_delete_event_cb), popup,
+                          G_CONNECT_DEFAULT);
+  return popup;
 }
 
 static gboolean decide_policy_cb(WebKitWebView *widget,
                                  WebKitPolicyDecision *decision,
                                  WebKitPolicyDecisionType type,
                                  gpointer user_data) {
+  (void)widget;
   if (type != WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION &&
       type != WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION) {
     return FALSE;
@@ -296,18 +416,13 @@ static gboolean decide_policy_cb(WebKitWebView *widget,
           navigation_decision);
   WebKitURIRequest *request =
       webkit_navigation_action_get_request(navigation_action);
-  const gchar *uri = webkit_uri_request_get_uri(request);
+  const gchar *uri =
+      request != nullptr ? webkit_uri_request_get_uri(request) : nullptr;
 
-  if (type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION &&
-      (!webview->event_listening || uri == nullptr || *uri == '\0')) {
-    if (uri != nullptr && *uri != '\0') {
-      webkit_web_view_load_uri(widget, uri);
-      webkit_policy_decision_ignore(decision);
-      return TRUE;
-    }
-    return FALSE;
-  }
-  if (!webview->event_listening) {
+  const gboolean should_ask_dart =
+      webview->event_listening &&
+      webview->navigation_request_callback_enabled;
+  if (!should_ask_dart) {
     if (webview->media_playback_requires_user_gesture >= 0) {
       use_navigation_decision(webview, decision);
       return TRUE;
@@ -318,9 +433,6 @@ static gboolean decide_policy_cb(WebKitWebView *widget,
   gint request_id = next_request_id(webview);
   PendingNavigationDecision *pending = g_new0(PendingNavigationDecision, 1);
   pending->decision = WEBKIT_POLICY_DECISION(g_object_ref(decision));
-  pending->uri = g_strdup(uri);
-  pending->open_in_place =
-      type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION;
   g_hash_table_insert(webview->pending_nav_decisions,
                       GINT_TO_POINTER(request_id), pending);
   schedule_pending_request_timeout(webview, request_id,
@@ -479,7 +591,12 @@ static void resource_sent_request_cb(WebKitWebResource *resource,
                                      WebKitURIResponse *redirected_response,
                                      gpointer user_data) {
   (void)redirected_response;
-  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
+  WebKitWebView *web_view = WEBKIT_WEB_VIEW(user_data);
+  LinuxWebView *webview = static_cast<LinuxWebView *>(
+      g_object_get_data(G_OBJECT(web_view), kLinuxWebViewInstanceKey));
+  if (webview == nullptr) {
+    return;
+  }
   ResourceRequestDetails *details =
       static_cast<ResourceRequestDetails *>(
           g_object_get_data(G_OBJECT(resource), kResourceRequestDetailsKey));
@@ -608,8 +725,9 @@ static void resource_load_started_cb(WebKitWebView *widget,
   g_object_set_data_full(G_OBJECT(resource), kResourceRequestDetailsKey,
                          details, destroy_resource_request_details);
 
-  g_signal_connect(resource, "sent-request",
-                   G_CALLBACK(resource_sent_request_cb), webview);
+  g_signal_connect_object(resource, "sent-request",
+                          G_CALLBACK(resource_sent_request_cb), widget,
+                          G_CONNECT_DEFAULT);
   g_signal_connect_object(resource, "notify::response",
                           G_CALLBACK(resource_response_cb), widget,
                           G_CONNECT_DEFAULT);
@@ -619,7 +737,7 @@ static gboolean authenticate_cb(WebKitWebView *widget,
                                 WebKitAuthenticationRequest *request,
                                 gpointer user_data) {
   LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
-  if (!webview->event_listening) {
+  if (!webview->event_listening || !webview->http_auth_callback_enabled) {
     return FALSE;
   }
 
@@ -649,7 +767,8 @@ static gboolean permission_request_cb(WebKitWebView *widget,
                                       WebKitPermissionRequest *request,
                                       gpointer user_data) {
   LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
-  if (!webview->event_listening) {
+  if (!webview->event_listening || !webview->permission_callback_enabled ||
+      !WEBKIT_IS_USER_MEDIA_PERMISSION_REQUEST(request)) {
     return FALSE;
   }
 
@@ -788,7 +907,7 @@ static gboolean load_failed_with_tls_errors_cb(WebKitWebView *widget,
                                                GTlsCertificateFlags errors,
                                                gpointer user_data) {
   LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
-  if (!webview->event_listening) {
+  if (!webview->event_listening || !webview->ssl_auth_callback_enabled) {
     return FALSE;
   }
 
@@ -827,6 +946,52 @@ static gboolean load_failed_with_tls_errors_cb(WebKitWebView *widget,
   return TRUE;
 }
 
+static const gchar *web_process_termination_reason_name(
+    WebKitWebProcessTerminationReason reason) {
+  switch (reason) {
+  case WEBKIT_WEB_PROCESS_CRASHED:
+    return "crashed";
+  case WEBKIT_WEB_PROCESS_EXCEEDED_MEMORY_LIMIT:
+    return "exceeded-memory-limit";
+#if WEBKIT_CHECK_VERSION(2, 34, 0)
+  case WEBKIT_WEB_PROCESS_TERMINATED_BY_API:
+    return "terminated-by-api";
+#endif
+  }
+  return "unknown";
+}
+
+static void web_process_terminated_cb(WebKitWebView *web_view,
+                                      WebKitWebProcessTerminationReason reason,
+                                      gpointer user_data) {
+  const gchar *reason_name = web_process_termination_reason_name(reason);
+  const gchar *uri = webkit_web_view_get_uri(web_view);
+  g_warning("WebKit web process terminated abnormally: reason=%s uri=%s",
+            reason_name, uri != nullptr ? uri : "");
+
+  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
+  if (webview == nullptr) {
+    return;
+  }
+
+  gchar *description =
+      g_strdup_printf("WebKit web process terminated: %s", reason_name);
+  FlValue *event = make_event("webResourceError");
+  fl_value_set_string_take(event, "description",
+                           fl_value_new_string(description));
+  fl_value_set_string_take(
+      event, "errorCode",
+      fl_value_new_int(static_cast<gint>(reason)));
+  fl_value_set_string_take(
+      event, "errorType", fl_value_new_string("webContentProcessTerminated"));
+  fl_value_set_string_take(event, "isForMainFrame", fl_value_new_bool(true));
+  if (uri != nullptr) {
+    fl_value_set_string_take(event, "url", fl_value_new_string(uri));
+  }
+  send_event(webview, event);
+  g_free(description);
+}
+
 static FlMethodErrorResponse *
 event_listen_cb(FlEventChannel *channel, FlValue *args, gpointer user_data) {
   LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
@@ -847,14 +1012,13 @@ static gboolean run_file_chooser_cb(WebKitWebView *web_view,
                                     WebKitFileChooserRequest *request,
                                     gpointer user_data) {
   LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
-  if (!webview->file_selector_callback_enabled) {
+  if (!webview->event_listening || !webview->file_selector_callback_enabled) {
     return FALSE;
   }
 
   const gint request_id = next_request_id(webview);
   g_hash_table_insert(webview->pending_file_chooser_requests,
                       GINT_TO_POINTER(request_id), g_object_ref(request));
-
   FlValue *event = fl_value_new_map();
   fl_value_set_string_take(event, "type",
                            fl_value_new_string("fileSelectorRequest"));
@@ -898,6 +1062,7 @@ void destroy_linux_webview(gpointer data) {
   }
 
   if (webview->web_view != nullptr) {
+    destroy_popup_windows(webview);
     delete webview->download_policy;
     webview->download_policy = nullptr;
     webview->visible = FALSE;
@@ -931,6 +1096,7 @@ void destroy_linux_webview(gpointer data) {
   g_hash_table_destroy(webview->pending_tls_errors);
   g_hash_table_destroy(webview->pending_file_chooser_requests);
   g_hash_table_destroy(webview->pending_request_timeouts);
+  g_ptr_array_unref(webview->popup_windows);
   g_hash_table_destroy(webview->js_channel_signal_ids);
   g_hash_table_destroy(webview->js_channels);
   g_hash_table_destroy(webview->user_scripts);
@@ -968,6 +1134,7 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self) {
       g_direct_hash, g_direct_equal, nullptr, destroy_pending_file_chooser_request);
   webview->pending_request_timeouts =
       g_hash_table_new(g_direct_hash, g_direct_equal);
+  webview->popup_windows = g_ptr_array_new();
   webview->js_channel_signal_ids =
       g_hash_table_new_full(g_str_hash, g_str_equal, g_free, nullptr);
   webview->js_channels =
@@ -1022,15 +1189,21 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self) {
       webview->content_manager, "__webview_all_scroll");
   webkit_user_content_manager_register_script_message_handler(
       webview->content_manager, "__webview_all_async_javascript");
-  g_signal_connect(webview->content_manager,
-                   "script-message-received::__webview_all_console",
-                   G_CALLBACK(console_message_received_cb), webview);
-  g_signal_connect(webview->content_manager,
-                   "script-message-received::__webview_all_scroll",
-                   G_CALLBACK(scroll_message_received_cb), webview);
-  g_signal_connect(webview->content_manager,
-                   "script-message-received::__webview_all_async_javascript",
-                   G_CALLBACK(async_javascript_message_received_cb), webview);
+  g_signal_connect_object(
+      webview->content_manager,
+      "script-message-received::__webview_all_console",
+      G_CALLBACK(console_message_received_cb), webview->web_view,
+      G_CONNECT_DEFAULT);
+  g_signal_connect_object(
+      webview->content_manager,
+      "script-message-received::__webview_all_scroll",
+      G_CALLBACK(scroll_message_received_cb), webview->web_view,
+      G_CONNECT_DEFAULT);
+  g_signal_connect_object(
+      webview->content_manager,
+      "script-message-received::__webview_all_async_javascript",
+      G_CALLBACK(async_javascript_message_received_cb), webview->web_view,
+      G_CONNECT_DEFAULT);
 
   rebuild_user_scripts(webview);
 
@@ -1058,6 +1231,8 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self) {
                    G_CALLBACK(script_dialog_cb), webview);
   g_signal_connect(webview->web_view, "load-failed-with-tls-errors",
                    G_CALLBACK(load_failed_with_tls_errors_cb), webview);
+  g_signal_connect(webview->web_view, "web-process-terminated",
+                   G_CALLBACK(web_process_terminated_cb), webview);
   g_signal_connect(webview->web_view, "scroll-event",
                    G_CALLBACK(zoom_scroll_event_cb), webview);
   g_signal_connect(webview->web_view, "key-press-event",

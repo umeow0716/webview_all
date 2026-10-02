@@ -21,12 +21,17 @@ class LinuxNavigationDelegate extends PlatformNavigationDelegate {
   HttpResponseErrorCallback? _onHttpError;
   HttpAuthRequestCallback? _onHttpAuthRequest;
   SslAuthErrorCallback? _onSslAuthError;
+  Future<void> Function()? _onCapabilitiesChanged;
 
   bool get hasNavigationRequestHandler => _onNavigationRequest != null;
 
   bool get hasHttpAuthRequestHandler => _onHttpAuthRequest != null;
 
   bool get hasSslAuthErrorHandler => _onSslAuthError != null;
+
+  void setCapabilitiesChangedCallback(Future<void> Function()? callback) {
+    _onCapabilitiesChanged = callback;
+  }
 
   void handleUrlChange(String url) {
     _onUrlChange?.call(UrlChange(url: url));
@@ -72,6 +77,7 @@ class LinuxNavigationDelegate extends PlatformNavigationDelegate {
     NavigationRequestCallback onNavigationRequest,
   ) async {
     _onNavigationRequest = onNavigationRequest;
+    await _onCapabilitiesChanged?.call();
   }
 
   @override
@@ -111,10 +117,12 @@ class LinuxNavigationDelegate extends PlatformNavigationDelegate {
     HttpAuthRequestCallback onHttpAuthRequest,
   ) async {
     _onHttpAuthRequest = onHttpAuthRequest;
+    await _onCapabilitiesChanged?.call();
   }
 
   @override
   Future<void> setOnSSlAuthError(SslAuthErrorCallback onSslAuthError) async {
     _onSslAuthError = onSslAuthError;
+    await _onCapabilitiesChanged?.call();
   }
 }

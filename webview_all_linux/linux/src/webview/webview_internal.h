@@ -16,6 +16,8 @@ void evaluate_javascript(WebKitWebView *web_view, const gchar *script,
 gchar *build_scrollbar_style_script(LinuxWebView *webview);
 gchar *build_overscroll_style_script(LinuxWebView *webview);
 void rebuild_user_scripts(LinuxWebView *webview);
+const gchar *console_hook_script();
+const gchar *scroll_hook_script();
 void console_message_received_cb(WebKitUserContentManager *manager,
                                  WebKitJavascriptResult *result,
                                  gpointer user_data);

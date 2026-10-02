@@ -34,6 +34,10 @@ typedef struct _LinuxWebView {
   FlMethodChannel *method_channel;
   FlEventChannel *event_channel;
   gboolean event_listening;
+  gboolean navigation_request_callback_enabled;
+  gboolean http_auth_callback_enabled;
+  gboolean ssl_auth_callback_enabled;
+  gboolean permission_callback_enabled;
   GHashTable *pending_nav_decisions;
   GHashTable *pending_auth_requests;
   GHashTable *pending_permission_requests;
@@ -41,6 +45,7 @@ typedef struct _LinuxWebView {
   GHashTable *pending_tls_errors;
   GHashTable *pending_file_chooser_requests;
   GHashTable *pending_request_timeouts;
+  GPtrArray *popup_windows;
   GHashTable *js_channel_signal_ids;
   GHashTable *js_channels;
   GHashTable *user_scripts;
@@ -77,7 +82,7 @@ typedef struct _LinuxWebView {
 } LinuxWebView;
 
 typedef struct {
-  LinuxWebView *webview;
+  GWeakRef web_view;
   gchar *name;
 } JavaScriptChannelHandlerData;
 
@@ -89,8 +94,6 @@ typedef struct {
 
 typedef struct {
   WebKitPolicyDecision *decision;
-  gchar *uri;
-  gboolean open_in_place;
 } PendingNavigationDecision;
 
 LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self);

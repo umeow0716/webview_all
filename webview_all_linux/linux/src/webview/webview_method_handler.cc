@@ -648,7 +648,7 @@ void instance_method_call_cb(FlMethodChannel *channel,
     gchar *signal_name = g_strdup_printf("script-message-received::%s", name);
     JavaScriptChannelHandlerData *data =
         g_new0(JavaScriptChannelHandlerData, 1);
-    data->webview = webview;
+    g_weak_ref_init(&data->web_view, G_OBJECT(webview->web_view));
     data->name = g_strdup(name);
     guint signal_id = g_signal_connect_data(
         webview->content_manager, signal_name,
@@ -831,6 +831,24 @@ void instance_method_call_cb(FlMethodChannel *channel,
     return;
   }
 
+  if (strcmp(method, "setNavigationDelegateCapabilities") == 0) {
+    webview->navigation_request_callback_enabled =
+        map_lookup_bool(args, "navigationRequest", FALSE);
+    webview->http_auth_callback_enabled =
+        map_lookup_bool(args, "httpAuth", FALSE);
+    webview->ssl_auth_callback_enabled =
+        map_lookup_bool(args, "sslAuth", FALSE);
+    respond(method_call, success_response());
+    return;
+  }
+
+  if (strcmp(method, "setPermissionCallbackEnabled") == 0) {
+    webview->permission_callback_enabled =
+        map_lookup_bool(args, "enabled", FALSE);
+    respond(method_call, success_response());
+    return;
+  }
+
   if (strcmp(method, "completeFileSelector") == 0) {
     const gint64 raw_request_id = map_lookup_int(args, "requestId", -1);
     gpointer key = GINT_TO_POINTER(static_cast<gint>(raw_request_id));
@@ -841,7 +859,6 @@ void instance_method_call_cb(FlMethodChannel *channel,
                                          "Unknown file selector request."));
       return;
     }
-
     FlValue *files_value = map_lookup(args, "files");
     if (files_value != nullptr &&
         fl_value_get_type(files_value) == FL_VALUE_TYPE_LIST &&
@@ -1017,12 +1034,24 @@ void instance_method_call_cb(FlMethodChannel *channel,
 
   if (strcmp(method, "setOnConsoleMessage") == 0) {
     webview->console_enabled = map_lookup_bool(args, "enabled", TRUE);
+    rebuild_user_scripts(webview);
+    if (webview->console_enabled) {
+      webkit_web_view_evaluate_javascript(
+          webview->web_view, console_hook_script(), -1, nullptr, nullptr,
+          nullptr, nullptr, nullptr);
+    }
     respond(method_call, success_response());
     return;
   }
 
   if (strcmp(method, "setOnScrollPositionChange") == 0) {
     webview->scroll_enabled = map_lookup_bool(args, "enabled", TRUE);
+    rebuild_user_scripts(webview);
+    if (webview->scroll_enabled) {
+      webkit_web_view_evaluate_javascript(
+          webview->web_view, scroll_hook_script(), -1, nullptr, nullptr,
+          nullptr, nullptr, nullptr);
+    }
     respond(method_call, success_response());
     return;
   }
@@ -1063,12 +1092,7 @@ void instance_method_call_cb(FlMethodChannel *channel,
             webview->pending_nav_decisions, GINT_TO_POINTER(request_id)));
     if (pending != nullptr) {
       if (allow) {
-        if (pending->open_in_place && pending->uri != nullptr) {
-          webkit_web_view_load_uri(webview->web_view, pending->uri);
-          webkit_policy_decision_ignore(pending->decision);
-        } else {
-          use_navigation_decision(webview, pending->decision);
-        }
+        use_navigation_decision(webview, pending->decision);
       } else {
         webkit_policy_decision_ignore(pending->decision);
       }

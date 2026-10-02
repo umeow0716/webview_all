@@ -1,5 +1,9 @@
 ## 1.4.4
 
+* 恢复 Linux 上接近浏览器的弹窗／新窗口行为，使用 WebKitGTK related view 与原生 GTK 窗口承载 `window.open` 和 `target=_blank`。
+* 仅在应用实际注册对应回调时拦截认证、导航与媒体权限，未支持的权限继续交由 WebKitGTK 默认处理。
+* 加固 Linux resource、download、popup 与 JavaScript bridge 的回调生命周期，保留原生 file chooser 回退，并记录 WebProcess 异常终止原因。
+* 只有启用 console／scroll 回调时才注入对应 JavaScript hook，避免默认修改网页运行环境。
 * 修复 iOS、macOS 构建时的证书 API 弃用警告。
 * OHOS 默认禁止 HTTPS 页面加载 HTTP 资源。
 

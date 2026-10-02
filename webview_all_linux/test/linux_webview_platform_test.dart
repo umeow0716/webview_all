@@ -1287,6 +1287,87 @@ void main() {
     expect(arguments['mainFrameOnly'], isTrue);
   });
 
+  test('Linux popup creation uses a related WebKit view', () {
+    final String source = File(
+      'linux/src/webview/linux_webview.cc',
+    ).readAsStringSync();
+
+    expect(source, contains('webkit_web_view_new_with_related_view(widget)'));
+    expect(source, contains('\"ready-to-show\"'));
+    expect(source, contains('destroy_popup_windows(webview);'));
+    expect(source, isNot(contains('webkit_web_view_load_uri(widget, uri)')));
+  });
+
+  test(
+    'syncs Linux native interception capabilities with registered callbacks',
+    () async {
+      final List<MethodCall> calls = <MethodCall>[];
+      _mockLinuxWebViewCreation(onInstanceCall: calls.add);
+      final LinuxWebViewController controller = LinuxWebViewController(
+        const PlatformWebViewControllerCreationParams(),
+      );
+      addTearDown(controller.dispose);
+      final LinuxNavigationDelegate delegate = LinuxNavigationDelegate(
+        const PlatformNavigationDelegateCreationParams(),
+      );
+
+      await controller.setPlatformNavigationDelegate(delegate);
+
+      MethodCall lastCapabilitiesCall() => calls.lastWhere(
+        (MethodCall call) => call.method == 'setNavigationDelegateCapabilities',
+      );
+
+      expect(lastCapabilitiesCall().arguments, <String, Object?>{
+        'navigationRequest': false,
+        'httpAuth': false,
+        'sslAuth': false,
+      });
+
+      await delegate.setOnNavigationRequest(
+        (NavigationRequest request) => NavigationDecision.navigate,
+      );
+      expect(lastCapabilitiesCall().arguments, <String, Object?>{
+        'navigationRequest': true,
+        'httpAuth': false,
+        'sslAuth': false,
+      });
+
+      await delegate.setOnHttpAuthRequest((HttpAuthRequest request) {});
+      await delegate.setOnSSlAuthError((PlatformSslAuthError error) {});
+      expect(lastCapabilitiesCall().arguments, <String, Object?>{
+        'navigationRequest': true,
+        'httpAuth': true,
+        'sslAuth': true,
+      });
+    },
+  );
+
+  test(
+    'enables Linux permission interception only after callback registration',
+    () async {
+      final List<MethodCall> calls = <MethodCall>[];
+      _mockLinuxWebViewCreation(onInstanceCall: calls.add);
+      final LinuxWebViewController controller = LinuxWebViewController(
+        const PlatformWebViewControllerCreationParams(),
+      );
+      addTearDown(controller.dispose);
+
+      expect(
+        calls.where(
+          (MethodCall call) => call.method == 'setPermissionCallbackEnabled',
+        ),
+        isEmpty,
+      );
+
+      await controller.setOnPlatformPermissionRequest((_) {});
+
+      final MethodCall permissionCall = calls.lastWhere(
+        (MethodCall call) => call.method == 'setPermissionCallbackEnabled',
+      );
+      expect(permissionCall.arguments, <String, Object?>{'enabled': true});
+    },
+  );
+
   test('dispatches HTTP response errors from Linux events', () async {
     final LinuxWebViewController controller = LinuxWebViewController(
       const PlatformWebViewControllerCreationParams(),

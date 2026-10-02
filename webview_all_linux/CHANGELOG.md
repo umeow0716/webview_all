@@ -1,5 +1,9 @@
 ## 1.4.4
 
+* Restore browser-like Linux popup/new-window behavior with related WebKitGTK views and native popup windows.
+* Preserve WebKitGTK default authentication and unsupported permission handling unless the application explicitly registers matching callbacks.
+* Harden Linux resource, download, popup, and JavaScript-bridge callback lifetimes, preserve native file-chooser fallback, and add WebProcess termination diagnostics.
+* Avoid injecting console and scroll JavaScript hooks until their callbacks are enabled.
 * Add opt-in raw request/response capture with lazy asynchronous response-body access.
 * Mark Linux captured request headers as provisional because WebKitGTK reports them before NetworkProcess/libsoup finalization.
 * Fix a certificate API deprecation warning when building for iOS and macOS.

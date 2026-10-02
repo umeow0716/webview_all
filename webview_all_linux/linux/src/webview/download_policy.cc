@@ -49,17 +49,23 @@ void DownloadPolicy::OnDownloadStarted(WebKitWebContext *context,
     return;
   }
 
-  g_signal_connect(download, "decide-destination",
-                   G_CALLBACK(OnDecideDestination), policy);
+  // A WebKitDownload can outlive the LinuxWebView/DownloadPolicy that started
+  // it. Tie the callback to the WebView GObject so GLib disconnects it before
+  // the native LinuxWebView state can be freed.
+  g_signal_connect_object(download, "decide-destination",
+                          G_CALLBACK(OnDecideDestination),
+                          policy->webview_->web_view, G_CONNECT_DEFAULT);
 }
 
 gboolean DownloadPolicy::OnDecideDestination(WebKitDownload *download,
                                              const gchar *suggested_filename,
                                              gpointer user_data) {
-  auto *policy = static_cast<DownloadPolicy *>(user_data);
-  if (webkit_download_get_web_view(download) != policy->webview_->web_view) {
+  WebKitWebView *web_view = WEBKIT_WEB_VIEW(user_data);
+  LinuxWebView *webview = static_cast<LinuxWebView *>(
+      g_object_get_data(G_OBJECT(web_view), kLinuxWebViewInstanceKey));
+  if (webview == nullptr || webkit_download_get_web_view(download) != web_view) {
     return FALSE;
   }
-  emit_download_start(policy->webview_, download, suggested_filename);
+  emit_download_start(webview, download, suggested_filename);
   return FALSE;
 }
