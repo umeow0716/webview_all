@@ -240,6 +240,12 @@ class WebviewController extends ValueNotifier<WebviewValue> {
         StateError('The Windows WebView has not been initialized.'),
       );
 
+  void _throwIfDisposed() {
+    if (_isDisposed) {
+      throw StateError('This Windows WebView controller has been disposed.');
+    }
+  }
+
   PermissionRequestedDelegate? _permissionRequested;
   NavigationRequestedDelegate? _navigationRequested;
   JavaScriptDialogRequestedDelegate? _javaScriptDialogRequested;
