@@ -716,7 +716,6 @@ static void resource_load_started_cb(WebKitWebView *widget,
                                      WebKitWebResource *resource,
                                      WebKitURIRequest *request,
                                      gpointer user_data) {
-  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
   ResourceRequestDetails *details = g_new0(ResourceRequestDetails, 1);
   details->is_main_frame =
       webkit_web_view_get_main_resource(widget) == resource;
