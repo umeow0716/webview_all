@@ -102,7 +102,7 @@ class WindowsWebViewControllerCreationParams
     extends PlatformWebViewControllerCreationParams {
   /// Creates a new [WindowsWebViewControllerCreationParams].
   const WindowsWebViewControllerCreationParams({
-    this.popupWindowPolicy = WindowsPopupWindowPolicy.sameWindow,
+    this.popupWindowPolicy = WindowsPopupWindowPolicy.allow,
     this.devToolsEnabled = false,
     this.browserAcceleratorKeysEnabled,
     this.downloadsEnabled,
@@ -111,13 +111,16 @@ class WindowsWebViewControllerCreationParams
   /// Creates a [WindowsWebViewControllerCreationParams] from generic params.
   const WindowsWebViewControllerCreationParams.fromPlatformWebViewControllerCreationParams(
     PlatformWebViewControllerCreationParams params, {
-    this.popupWindowPolicy = WindowsPopupWindowPolicy.sameWindow,
+    this.popupWindowPolicy = WindowsPopupWindowPolicy.allow,
     this.devToolsEnabled = false,
     this.browserAcceleratorKeysEnabled,
     this.downloadsEnabled,
   });
 
   /// How popup windows should be handled.
+  ///
+  /// Defaults to [WindowsPopupWindowPolicy.allow] to preserve WebView2's
+  /// native browsing-context behavior.
   final WindowsPopupWindowPolicy popupWindowPolicy;
 
   /// Whether users can open DevTools through menus and keyboard shortcuts.
@@ -426,6 +429,11 @@ class WindowsWebViewController extends PlatformWebViewController {
       ) {
         weakThis.target?._handleLoadError(status);
       }),
+      _webviewController.processFailed.listen((
+        native_types.WebviewProcessFailedKind kind,
+      ) {
+        weakThis.target?._handleProcessFailed(kind);
+      }),
       _webviewController.httpResponseError.listen((
         native_webview.WebviewHttpResponseError error,
       ) {
@@ -660,6 +668,31 @@ class WindowsWebViewController extends PlatformWebViewController {
     );
   }
 
+  void _handleProcessFailed(native_types.WebviewProcessFailedKind kind) {
+    final WebResourceErrorType? errorType = switch (kind) {
+      native_types.WebviewProcessFailedKind.browserProcessExited =>
+        WebResourceErrorType.webViewInvalidated,
+      native_types.WebviewProcessFailedKind.renderProcessExited =>
+        WebResourceErrorType.webContentProcessTerminated,
+      native_types.WebviewProcessFailedKind.frameRenderProcessExited =>
+        WebResourceErrorType.webContentProcessTerminated,
+      _ => null,
+    };
+    if (errorType == null) {
+      return;
+    }
+    _currentNavigationDelegate?._onWebResourceError?.call(
+      WindowsWebViewProcessError(
+        kind,
+        errorType: errorType,
+        url: _currentUrl,
+        isForMainFrame:
+            kind !=
+            native_types.WebviewProcessFailedKind.frameRenderProcessExited,
+      ),
+    );
+  }
+
   void _handleHttpResponseError(native_webview.WebviewHttpResponseError error) {
     final Uri? uri = Uri.tryParse(error.url);
     _currentNavigationDelegate?._onHttpError?.call(
@@ -889,7 +922,7 @@ class WindowsWebViewController extends PlatformWebViewController {
   ) async {
     final callback = _currentNavigationDelegate?._onHttpAuthRequest;
     if (callback == null) {
-      return <String, Object?>{'action': 'cancel'};
+      return null;
     }
 
     final completer = Completer<Map<String, Object?>>();
@@ -976,7 +1009,7 @@ class WindowsWebViewController extends PlatformWebViewController {
   ) async {
     final callback = _currentNavigationDelegate?._onSslAuthError;
     if (callback == null) {
-      return <String, Object?>{'action': 'cancel'};
+      return null;
     }
 
     final completer = Completer<Map<String, Object?>>();
@@ -2413,6 +2446,24 @@ class WindowsWebResourceResponse extends WebResourceResponse {
 
   /// The response MIME type parsed from WebView2 headers, when available.
   final String? mimeType;
+}
+
+/// Windows error reported when a WebView2 browser or renderer process fails.
+class WindowsWebViewProcessError extends WebResourceError {
+  /// Creates a process failure error.
+  WindowsWebViewProcessError(
+    this.processFailedKind, {
+    required WebResourceErrorType errorType,
+    super.url,
+    super.isForMainFrame,
+  }) : super(
+         errorCode: processFailedKind.index,
+         description: 'WebView2 process failure: ${processFailedKind.name}',
+         errorType: errorType,
+       );
+
+  /// The WebView2 process failure kind.
+  final native_types.WebviewProcessFailedKind processFailedKind;
 }
 
 /// Windows error mapping for WebView2 load failures.

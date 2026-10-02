@@ -1,5 +1,9 @@
 ## 1.4.4
 
+* Preserve WebView2's native HTTP authentication and TLS error handling when no custom delegate is installed.
+* Restore browser-like popup and download behavior by allowing new windows by default and keeping WebView2's download UI visible.
+* Report browser and renderer process failures through `onWebResourceError`.
+* Improve composition-controller input forwarding with mouse-leave and double-click events.
 * Update the WebView2 SDK baseline to 1.0.2365.46 for request-source-aware resource filters, with runtime fallback for older WebView2 installations.
 * Add opt-in raw request/response capture with lazy asynchronous response-body access.
 * Distinguish provisional `WebResourceRequested` headers from committed request headers reported with `WebResourceResponseReceived`.

@@ -44,6 +44,10 @@ enum class WebviewPermissionKind {
 
 enum class WebviewPermissionState { Default, Allow, Deny };
 
+enum class WebviewHttpAuthDecision { Default, Proceed, Cancel };
+
+enum class WebviewSslAuthDecision { Default, Proceed, Cancel };
+
 enum class WebviewPopupWindowPolicy { Allow, Deny, ShowInSameWindow };
 
 enum class WebviewHostResourceAccessKind { Deny, Allow, DenyCors };
@@ -173,6 +177,7 @@ struct EventRegistrations {
   EventRegistrationToken new_windows_requested_token_{};
   EventRegistrationToken contains_fullscreen_element_changed_token_{};
   EventRegistrationToken download_starting_token_{};
+  EventRegistrationToken process_failed_token_{};
 };
 
 class Webview {
@@ -212,13 +217,15 @@ public:
                              bool is_redirected,
                              WebviewNavigationRequestedCompleter completer)>
       NavigationRequestedCallback;
-  typedef std::function<void(bool accepted, const std::string &user,
+  typedef std::function<void(WebviewHttpAuthDecision decision,
+                             const std::string &user,
                              const std::string &password)>
       WebviewHttpAuthRequestedCompleter;
   typedef std::function<void(const WebviewHttpAuthRequest &request,
                              WebviewHttpAuthRequestedCompleter completer)>
       HttpAuthRequestedCallback;
-  typedef std::function<void(bool proceed)> WebviewSslAuthErrorCompleter;
+  typedef std::function<void(WebviewSslAuthDecision decision)>
+      WebviewSslAuthErrorCompleter;
   typedef std::function<void(const WebviewSslAuthError &error,
                              WebviewSslAuthErrorCompleter completer)>
       SslAuthErrorCallback;
@@ -232,6 +239,8 @@ public:
   typedef std::function<void(const WebviewJavaScriptDialogRequest &request,
                              WebviewJavaScriptDialogCompleter completer)>
       JavaScriptDialogRequestedCallback;
+  typedef std::function<void(COREWEBVIEW2_PROCESS_FAILED_KIND kind)>
+      ProcessFailedCallback;
   typedef std::function<void(bool contains_fullscreen_element)>
       ContainsFullScreenElementChangedCallback;
   typedef std::function<void(WebviewDownloadEvent)> DownloadEventCallback;
@@ -253,6 +262,7 @@ public:
   HRESULT SetFocus(bool focused, COREWEBVIEW2_MOVE_FOCUS_REASON reason);
   void NotifyParentWindowPositionChanged();
   void SetCursorPos(double x, double y);
+  void SetCursorLeave();
   void SetPointerUpdate(int32_t pointer, WebviewPointerEventKind eventKind,
                         double x, double y, double size, double pressure);
   void SetPointerButtonState(WebviewPointerButton button, bool isDown);
@@ -380,6 +390,9 @@ public:
   void OnSslAuthError(SslAuthErrorCallback callback) {
     ssl_auth_error_callback_ = std::move(callback);
   }
+  void OnProcessFailed(ProcessFailedCallback callback) {
+    process_failed_callback_ = std::move(callback);
+  }
 
   void OnJavaScriptDialogRequested(JavaScriptDialogRequestedCallback callback) {
     java_script_dialog_requested_callback_ = std::move(callback);
@@ -446,6 +459,9 @@ private:
       pending_network_navigation_policies_;
   double horizontal_scroll_remainder_ = 0.0;
   double vertical_scroll_remainder_ = 0.0;
+  WebviewPointerButton last_click_button_ = WebviewPointerButton::None;
+  ULONGLONG last_click_time_ = 0;
+  POINT last_click_pos_{};
   std::shared_ptr<LifetimeState> lifetime_state_ =
       std::make_shared<LifetimeState>();
 
@@ -472,6 +488,7 @@ private:
   NavigationRequestedCallback navigation_requested_callback_;
   HttpAuthRequestedCallback http_auth_requested_callback_;
   SslAuthErrorCallback ssl_auth_error_callback_;
+  ProcessFailedCallback process_failed_callback_;
   JavaScriptDialogRequestedCallback java_script_dialog_requested_callback_;
   DevtoolsProtocolEventCallback devtools_protocol_event_callback_;
   ContainsFullScreenElementChangedCallback

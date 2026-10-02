@@ -1,5 +1,9 @@
 ## 1.4.4
 
+* Windows 未设置自定义回调时保留 WebView2 原生 HTTP 认证与 TLS 错误处理。
+* 默认允许新窗口并保留 WebView2 下载界面，使弹窗与下载行为更接近浏览器。
+* 通过 `onWebResourceError` 上报浏览器进程与渲染进程异常。
+* 补齐 CompositionController 的鼠标离开与双击输入转发。
 * 修复 iOS、macOS 构建时的证书 API 弃用警告。
 * OHOS 默认禁止 HTTPS 页面加载 HTTP 资源。
 

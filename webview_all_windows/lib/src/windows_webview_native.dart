@@ -295,6 +295,10 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   final StreamController<WebErrorStatus> _onLoadErrorStreamController =
       StreamController<WebErrorStatus>();
 
+  final StreamController<WebviewProcessFailedKind>
+  _processFailedStreamController =
+      StreamController<WebviewProcessFailedKind>.broadcast();
+
   final StreamController<WebviewHttpResponseError>
   _httpResponseErrorStreamController =
       StreamController<WebviewHttpResponseError>();
@@ -316,6 +320,9 @@ class WebviewController extends ValueNotifier<WebviewValue> {
 
   /// A stream reflecting the navigation error when navigation completed with an error.
   Stream<WebErrorStatus> get onLoadError => _onLoadErrorStreamController.stream;
+
+  Stream<WebviewProcessFailedKind> get processFailed =>
+      _processFailedStreamController.stream;
 
   /// A stream reflecting HTTP response status errors.
   Stream<WebviewHttpResponseError> get httpResponseError =>
@@ -401,6 +408,14 @@ class WebviewController extends ValueNotifier<WebviewValue> {
           case 'onLoadError':
             final value = WebErrorStatus.values[map['value']];
             _onLoadErrorStreamController.add(value);
+            break;
+          case 'processFailed':
+            final int index = (map['value'] as num?)?.toInt() ?? -1;
+            if (index >= 0 && index < WebviewProcessFailedKind.values.length) {
+              _processFailedStreamController.add(
+                WebviewProcessFailedKind.values[index],
+              );
+            }
             break;
           case 'webResourceRequest':
             final value =
@@ -759,6 +774,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     unawaited(_loadingStateStreamController.close());
     unawaited(_downloadEventStreamController.close());
     unawaited(_onLoadErrorStreamController.close());
+    unawaited(_processFailedStreamController.close());
     unawaited(_httpResponseErrorStreamController.close());
     unawaited(_rawWebResourceRequestStreamController.close());
     unawaited(_rawWebResourceResponseStreamController.close());
@@ -1335,6 +1351,14 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     );
   }
 
+  Future<void> _setCursorLeave() async {
+    if (_isDisposed) {
+      return;
+    }
+    assert(value.isInitialized);
+    await _methodChannel.invokeMethod<void>('setCursorLeave');
+  }
+
   /// Indicates whether the specified [button] is currently down.
   Future<void> _setPointerButtonState(PointerButton button, bool isDown) async {
     if (_isDisposed) {
@@ -1829,6 +1853,9 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
                   },
                   child: MouseRegion(
                     cursor: _cursor,
+                    onExit: (_) {
+                      unawaited(_controller._setCursorLeave());
+                    },
                     child: Texture(
                       textureId: _controller._textureId,
                       filterQuality: widget.filterQuality,

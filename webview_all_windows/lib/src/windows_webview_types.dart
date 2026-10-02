@@ -13,6 +13,21 @@ enum WebviewDownloadEventKind {
   downloadCancelled,
 }
 
+/// WebView2 process failure kind.
+// Order must match COREWEBVIEW2_PROCESS_FAILED_KIND (see WebView2.h).
+enum WebviewProcessFailedKind {
+  browserProcessExited,
+  renderProcessExited,
+  renderProcessUnresponsive,
+  frameRenderProcessExited,
+  utilityProcessExited,
+  sandboxHelperProcessExited,
+  gpuProcessExited,
+  ppapiPluginProcessExited,
+  ppapiBrokerProcessExited,
+  unknownProcessExited,
+}
+
 /// Pointer Event kind
 // Order must match WebviewPointerEventKind (see webview.h)
 enum WebviewPointerEventKind { activate, down, enter, leave, up, update }

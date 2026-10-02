@@ -171,6 +171,12 @@ WebviewBridge::WebviewBridge(flutter::BinaryMessenger *messenger,
           return;
         }
 
+        if (call.method_name() == "setCursorLeave") {
+          webview_->SetCursorLeave();
+          result->Success();
+          return;
+        }
+
         if (call.method_name() == "getWebResourceResponseContent") {
           int64_t capture_id = -1;
           if (arguments != nullptr) {
@@ -486,6 +492,15 @@ void WebviewBridge::RegisterEventHandlers() {
         OnJavaScriptDialogRequested(request, completer);
       });
 
+  webview_->OnProcessFailed([this](COREWEBVIEW2_PROCESS_FAILED_KIND kind) {
+    EmitEvent(flutter::EncodableValue(flutter::EncodableMap{
+        {flutter::EncodableValue(kEventType),
+         flutter::EncodableValue("processFailed")},
+        {flutter::EncodableValue(kEventValue),
+         flutter::EncodableValue(static_cast<int>(kind))},
+    }));
+  });
+
   webview_->OnContainsFullScreenElementChanged(
       [this](bool contains_fullscreen_element) {
         const auto event = flutter::EncodableValue(flutter::EncodableMap{
@@ -566,15 +581,21 @@ void WebviewBridge::OnHttpAuthRequested(
                 result == nullptr ? nullptr
                                   : std::get_if<flutter::EncodableMap>(result);
             if (response == nullptr) {
-              completer(false, "", "");
+              completer(WebviewHttpAuthDecision::Default, "", "");
               return;
             }
 
-            bool accepted = false;
+            WebviewHttpAuthDecision decision = WebviewHttpAuthDecision::Default;
             auto action_it = response->find(flutter::EncodableValue("action"));
             if (action_it != response->end()) {
-              const auto action = std::get_if<std::string>(&action_it->second);
-              accepted = action != nullptr && *action == "proceed";
+              if (const auto action =
+                      std::get_if<std::string>(&action_it->second)) {
+                if (*action == "proceed") {
+                  decision = WebviewHttpAuthDecision::Proceed;
+                } else if (*action == "cancel") {
+                  decision = WebviewHttpAuthDecision::Cancel;
+                }
+              }
             }
 
             std::string user;
@@ -596,14 +617,16 @@ void WebviewBridge::OnHttpAuthRequested(
               }
             }
 
-            completer(accepted, user, password);
+            completer(decision, user, password);
           },
           [completer](const std::string &error_code,
                       const std::string &error_message,
                       const flutter::EncodableValue *error_details) {
-            completer(false, "", "");
+            completer(WebviewHttpAuthDecision::Default, "", "");
           },
-          [completer]() { completer(false, "", ""); }));
+          [completer]() {
+            completer(WebviewHttpAuthDecision::Default, "", "");
+          }));
 }
 
 void WebviewBridge::OnSslAuthError(
@@ -622,24 +645,30 @@ void WebviewBridge::OnSslAuthError(
                 result == nullptr ? nullptr
                                   : std::get_if<flutter::EncodableMap>(result);
             if (response == nullptr) {
-              completer(false);
+              completer(WebviewSslAuthDecision::Default);
               return;
             }
 
-            bool proceed = false;
+            WebviewSslAuthDecision decision = WebviewSslAuthDecision::Default;
             auto action_it = response->find(flutter::EncodableValue("action"));
             if (action_it != response->end()) {
-              const auto action = std::get_if<std::string>(&action_it->second);
-              proceed = action != nullptr && *action == "proceed";
+              if (const auto action =
+                      std::get_if<std::string>(&action_it->second)) {
+                if (*action == "proceed") {
+                  decision = WebviewSslAuthDecision::Proceed;
+                } else if (*action == "cancel") {
+                  decision = WebviewSslAuthDecision::Cancel;
+                }
+              }
             }
-            completer(proceed);
+            completer(decision);
           },
           [completer](const std::string &error_code,
                       const std::string &error_message,
                       const flutter::EncodableValue *error_details) {
-            completer(false);
+            completer(WebviewSslAuthDecision::Default);
           },
-          [completer]() { completer(false); }));
+          [completer]() { completer(WebviewSslAuthDecision::Default); }));
 }
 
 void WebviewBridge::OnJavaScriptDialogRequested(

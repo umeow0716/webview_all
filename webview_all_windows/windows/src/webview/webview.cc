@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <map>
 #include <memory>
@@ -922,17 +923,27 @@ void Webview::RegisterEventHandlers() {
                   request, [deferral = std::move(deferral),
                             auth_args = std::move(auth_args),
                             response = std::move(response)](
-                               bool accepted, const std::string &user,
+                               WebviewHttpAuthDecision decision,
+                               const std::string &user,
                                const std::string &password) mutable {
-                    if (accepted) {
+                    switch (decision) {
+                    case WebviewHttpAuthDecision::Proceed: {
                       const std::wstring user_utf16 = util::Utf16FromUtf8(user);
                       const std::wstring password_utf16 =
                           util::Utf16FromUtf8(password);
                       response->put_UserName(user_utf16.c_str());
                       response->put_Password(password_utf16.c_str());
                       auth_args->put_Cancel(FALSE);
-                    } else {
+                      break;
+                    }
+                    case WebviewHttpAuthDecision::Cancel:
                       auth_args->put_Cancel(TRUE);
+                      break;
+                    case WebviewHttpAuthDecision::Default:
+                      // Leaving the response empty with Cancel=false preserves
+                      // WebView2's built-in authentication prompt.
+                      auth_args->put_Cancel(FALSE);
+                      break;
                     }
                     deferral->Complete();
                   });
@@ -951,8 +962,7 @@ void Webview::RegisterEventHandlers() {
                    ICoreWebView2ServerCertificateErrorDetectedEventArgs *args)
                 -> HRESULT {
               if (!ssl_auth_error_callback_) {
-                args->put_Action(
-                    COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL);
+                // Preserve WebView2's default TLS interstitial behavior.
                 return S_OK;
               }
 
@@ -961,15 +971,11 @@ void Webview::RegisterEventHandlers() {
               wil::unique_cotaskmem_string request_uri;
               if (FAILED(args->get_ErrorStatus(&status)) ||
                   FAILED(args->get_RequestUri(&request_uri))) {
-                args->put_Action(
-                    COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL);
                 return S_OK;
               }
 
               wil::com_ptr<ICoreWebView2Deferral> deferral;
               if (FAILED(args->GetDeferral(deferral.put())) || !deferral) {
-                args->put_Action(
-                    COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL);
                 return S_OK;
               }
 
@@ -981,11 +987,22 @@ void Webview::RegisterEventHandlers() {
               ssl_auth_error_callback_(
                   {util::Utf8FromUtf16(request_uri.get()), status},
                   [deferral = std::move(deferral),
-                   error_args = std::move(error_args)](bool proceed) mutable {
-                    error_args->put_Action(
-                        proceed
-                            ? COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW
-                            : COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL);
+                   error_args = std::move(error_args)](
+                      WebviewSslAuthDecision decision) mutable {
+                    switch (decision) {
+                    case WebviewSslAuthDecision::Proceed:
+                      error_args->put_Action(
+                          COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_ALWAYS_ALLOW);
+                      break;
+                    case WebviewSslAuthDecision::Cancel:
+                      error_args->put_Action(
+                          COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_CANCEL);
+                      break;
+                    case WebviewSslAuthDecision::Default:
+                      error_args->put_Action(
+                          COREWEBVIEW2_SERVER_CERTIFICATE_ERROR_ACTION_DEFAULT);
+                      break;
+                    }
                     deferral->Complete();
                   });
 
@@ -1076,6 +1093,23 @@ void Webview::RegisterEventHandlers() {
           .Get(),
       &event_registrations_.script_dialog_opening_token_);
 
+  webview_->add_ProcessFailed(
+      Callback<ICoreWebView2ProcessFailedEventHandler>(
+          [this](ICoreWebView2 *sender,
+                 ICoreWebView2ProcessFailedEventArgs *args) -> HRESULT {
+            if (!process_failed_callback_ || args == nullptr) {
+              return S_OK;
+            }
+            COREWEBVIEW2_PROCESS_FAILED_KIND kind =
+                COREWEBVIEW2_PROCESS_FAILED_KIND_UNKNOWN_PROCESS_EXITED;
+            if (SUCCEEDED(args->get_ProcessFailedKind(&kind))) {
+              process_failed_callback_(kind);
+            }
+            return S_OK;
+          })
+          .Get(),
+      &event_registrations_.process_failed_token_);
+
   webview_->add_NewWindowRequested(
       Callback<ICoreWebView2NewWindowRequestedEventHandler>(
           [this](ICoreWebView2 *sender,
@@ -1139,10 +1173,13 @@ void Webview::RegisterEventHandlers() {
                 }
                 return result;
               }
-              args->put_Handled(TRUE);
-
               wil::com_ptr<ICoreWebView2DownloadOperation> download;
-              args->get_DownloadOperation(&download);
+              if (FAILED(args->get_DownloadOperation(download.put())) ||
+                  !download) {
+                // Do not suppress WebView2's default download behavior if the
+                // observation hook itself cannot obtain the operation.
+                return S_OK;
+              }
 
               INT64 totalBytesToReceive = 0;
               download->get_TotalBytesToReceive(&totalBytesToReceive);
@@ -1159,7 +1196,6 @@ void Webview::RegisterEventHandlers() {
               wil::unique_cotaskmem_string resultFilePath;
               args->get_ResultFilePath(&resultFilePath);
 
-              args->put_ResultFilePath(resultFilePath.get());
               UpdateDownloadProgress(download.get());
 
               if (download_event_callback_) {
@@ -1891,6 +1927,15 @@ void Webview::SetCursorPos(double x, double y) {
       virtual_keys_.state(), 0, point);
 }
 
+void Webview::SetCursorLeave() {
+  if (!IsValid()) {
+    return;
+  }
+  composition_controller_->SendMouseInput(
+      COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE, virtual_keys_.state(), 0,
+      last_cursor_pos_);
+}
+
 void Webview::SetPointerUpdate(int32_t pointer,
                                WebviewPointerEventKind eventKind, double x,
                                double y, double size, double pressure) {
@@ -1968,25 +2013,54 @@ void Webview::SetPointerButtonState(WebviewPointerButton button, bool is_down) {
     SetFocus(true, COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
   }
 
+  bool is_double_click = false;
+  if (is_down && button != WebviewPointerButton::None) {
+    const ULONGLONG now = GetTickCount64();
+    const LONG max_dx = GetSystemMetrics(SM_CXDOUBLECLK) / 2;
+    const LONG max_dy = GetSystemMetrics(SM_CYDOUBLECLK) / 2;
+    is_double_click =
+        last_click_button_ == button && last_click_time_ != 0 &&
+        now - last_click_time_ <= GetDoubleClickTime() &&
+        std::abs(last_cursor_pos_.x - last_click_pos_.x) <= max_dx &&
+        std::abs(last_cursor_pos_.y - last_click_pos_.y) <= max_dy;
+    if (is_double_click) {
+      last_click_button_ = WebviewPointerButton::None;
+      last_click_time_ = 0;
+    } else {
+      last_click_button_ = button;
+      last_click_time_ = now;
+      last_click_pos_ = last_cursor_pos_;
+    }
+  }
+
   COREWEBVIEW2_MOUSE_EVENT_KIND kind;
   switch (button) {
   case WebviewPointerButton::Primary:
     virtual_keys_.set_isLeftButtonDown(is_down);
-    kind = is_down ? COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOWN
-                   : COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_UP;
+    kind = is_down
+               ? (is_double_click
+                      ? COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOUBLE_CLICK
+                      : COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_DOWN)
+               : COREWEBVIEW2_MOUSE_EVENT_KIND_LEFT_BUTTON_UP;
     break;
   case WebviewPointerButton::Secondary:
     virtual_keys_.set_isRightButtonDown(is_down);
-    kind = is_down ? COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOWN
-                   : COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_UP;
+    kind = is_down
+               ? (is_double_click
+                      ? COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOUBLE_CLICK
+                      : COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_DOWN)
+               : COREWEBVIEW2_MOUSE_EVENT_KIND_RIGHT_BUTTON_UP;
     break;
   case WebviewPointerButton::Tertiary:
     virtual_keys_.set_isMiddleButtonDown(is_down);
-    kind = is_down ? COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOWN
-                   : COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_UP;
+    kind = is_down
+               ? (is_double_click
+                      ? COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOUBLE_CLICK
+                      : COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_DOWN)
+               : COREWEBVIEW2_MOUSE_EVENT_KIND_MIDDLE_BUTTON_UP;
     break;
   default:
-    kind = static_cast<COREWEBVIEW2_MOUSE_EVENT_KIND>(0);
+    return;
   }
 
   composition_controller_->SendMouseInput(kind, virtual_keys_.state(), 0,

@@ -1218,7 +1218,7 @@ void main() {
     },
   );
 
-  test('cancels HTTP auth requests without a handler', () async {
+  test('preserves default HTTP auth handling without a handler', () async {
     final controller = _createWindowsController(
       const PlatformWebViewControllerCreationParams(),
     );
@@ -1232,7 +1232,7 @@ void main() {
       },
     );
 
-    expect(response, <String, Object?>{'action': 'cancel'});
+    expect(response, isNull);
   });
 
   test('dispatches SSL auth errors through the navigation delegate', () async {
@@ -1271,7 +1271,7 @@ void main() {
     );
   });
 
-  test('cancels SSL auth errors without a handler', () async {
+  test('preserves default SSL handling without a handler', () async {
     final controller = _createWindowsController(
       const PlatformWebViewControllerCreationParams(),
     );
@@ -1285,7 +1285,7 @@ void main() {
       },
     );
 
-    expect(response, <String, Object?>{'action': 'cancel'});
+    expect(response, isNull);
   });
 
   test('loads requests with method headers and body', () async {
@@ -1771,6 +1771,49 @@ void main() {
       expect(creations, 1);
     },
   );
+
+  test('uses browser-like popup handling by default', () async {
+    final policies = <int>[];
+    _mockWindowsWebViewCreation(onSetPopupWindowPolicy: policies.add);
+    final controller = _createWindowsController(
+      const WindowsWebViewControllerCreationParams(),
+    );
+
+    await controller.currentUrl();
+
+    expect(policies, <int>[native_types.WebviewPopupWindowPolicy.allow.index]);
+  });
+
+  test('reports WebView2 renderer and browser process failures', () async {
+    final controller = _createWindowsController(
+      const PlatformWebViewControllerCreationParams(),
+    );
+    final errors = <WebResourceError>[];
+    final delegate = WindowsNavigationDelegate(
+      const PlatformNavigationDelegateCreationParams(),
+    );
+    await delegate.setOnWebResourceError(errors.add);
+    await controller.setPlatformNavigationDelegate(delegate);
+
+    await _emitWindowsWebViewEvent(<String, Object?>{
+      'type': 'processFailed',
+      'value': native_types.WebviewProcessFailedKind.renderProcessExited.index,
+    });
+    await _emitWindowsWebViewEvent(<String, Object?>{
+      'type': 'processFailed',
+      'value': native_types.WebviewProcessFailedKind.browserProcessExited.index,
+    });
+    await _flushAsyncEvents();
+
+    expect(errors, hasLength(2));
+    expect(
+      errors[0].errorType,
+      WebResourceErrorType.webContentProcessTerminated,
+    );
+    expect(errors[0].isForMainFrame, isTrue);
+    expect(errors[1].errorType, WebResourceErrorType.webViewInvalidated);
+    expect(errors[1].isForMainFrame, isTrue);
+  });
 
   for (final entry in <String, PlatformWebViewControllerCreationParams>{
     'generic': const PlatformWebViewControllerCreationParams(),
@@ -2641,6 +2684,7 @@ void _mockWindowsWebViewCreation({
   Future<void> Function()? beforeCreateWebView,
   void Function(WindowsEnvironmentOptions options)? onEnsureEnvironment,
   void Function()? onOpenWebView2DownloadPage,
+  void Function(int policy)? onSetPopupWindowPolicy,
   void Function(WindowsLoadRequestData request)? onLoadRequest,
   void Function(String url)? onLoadUrl,
   void Function(String content)? onLoadStringContent,
@@ -2710,6 +2754,8 @@ void _mockWindowsWebViewCreation({
   messenger.setMockMessageHandler(_hostApiChannel('setPopupWindowPolicy'), (
     ByteData? message,
   ) async {
+    final args = _decodePigeonArgs(message);
+    onSetPopupWindowPolicy?.call(args[1]! as int);
     return _encodePigeonSuccess();
   });
   messenger.setMockMessageHandler(
