@@ -82,6 +82,20 @@ struct WebviewJavaScriptDialogRequest {
   std::optional<std::string> default_text;
 };
 
+struct WebviewRawWebResourceRequest {
+  std::string url;
+  std::string method;
+  std::map<std::string, std::string> headers;
+};
+
+struct WebviewRawWebResourceResponse {
+  uint64_t capture_id;
+  WebviewRawWebResourceRequest request;
+  int status_code;
+  std::map<std::string, std::string> headers;
+  std::optional<std::string> reason_phrase;
+};
+
 struct WebviewHttpResponseError {
   std::string url;
   std::string method;
@@ -171,6 +185,12 @@ public:
       OnLoadErrorCallback;
   typedef std::function<void(const WebviewHttpResponseError &)>
       HttpResponseErrorCallback;
+  typedef std::function<void(const WebviewRawWebResourceRequest &)>
+      RawWebResourceRequestCallback;
+  typedef std::function<void(const WebviewRawWebResourceResponse &)>
+      RawWebResourceResponseCallback;
+  typedef std::function<void(bool, std::vector<uint8_t>)>
+      WebResourceContentCallback;
   typedef std::function<void(WebviewHistoryChanged)> HistoryChangedCallback;
   typedef std::function<void(const std::string &)>
       DevtoolsProtocolEventCallback;
@@ -268,6 +288,9 @@ public:
   bool SetCacheDisabled(bool disabled);
   void SetPopupWindowPolicy(WebviewPopupWindowPolicy policy);
   void SetNavigationRequestCallbacksEnabled(bool enabled);
+  bool SetWebResourceCaptureEnabled(bool enabled);
+  void GetWebResourceResponseContent(uint64_t capture_id,
+                                     WebResourceContentCallback callback);
   bool SetUserAgent(const std::string *user_agent);
   std::optional<std::string> GetUserAgent();
   bool SetJavaScriptEnabled(bool enabled);
@@ -300,6 +323,14 @@ public:
 
   void OnHttpResponseError(HttpResponseErrorCallback callback) {
     http_response_error_callback_ = std::move(callback);
+  }
+
+  void OnRawWebResourceRequest(RawWebResourceRequestCallback callback) {
+    raw_web_resource_request_callback_ = std::move(callback);
+  }
+
+  void OnRawWebResourceResponse(RawWebResourceResponseCallback callback) {
+    raw_web_resource_response_callback_ = std::move(callback);
   }
 
   void OnLoadingStateChanged(LoadingStateChangedCallback callback) {
@@ -399,6 +430,12 @@ private:
   bool java_script_prompt_dialog_enabled_ = false;
   bool navigation_request_callbacks_enabled_ = false;
   bool web_resource_navigation_policy_available_ = false;
+  bool web_resource_capture_enabled_ = false;
+  bool web_resource_capture_uses_source_kinds_filter_ = false;
+  uint64_t next_web_resource_capture_id_ = 1;
+  std::unordered_map<uint64_t, wil::com_ptr<ICoreWebView2WebResourceResponseView>>
+      captured_web_resource_responses_;
+  std::deque<uint64_t> captured_web_resource_response_order_;
   bool downloads_enabled_ = true;
   HRESULT download_handler_result_ = E_NOINTERFACE;
   uint64_t latest_navigation_request_id_ = 0;
@@ -422,6 +459,8 @@ private:
   DownloadEventCallback download_event_callback_;
   OnLoadErrorCallback on_load_error_callback_;
   HttpResponseErrorCallback http_response_error_callback_;
+  RawWebResourceRequestCallback raw_web_resource_request_callback_;
+  RawWebResourceResponseCallback raw_web_resource_response_callback_;
   HistoryChangedCallback history_changed_callback_;
   DocumentTitleChangedCallback document_title_changed_callback_;
   CursorChangedCallback cursor_changed_callback_;

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,6 +15,82 @@ void main() {
 
   setUp(_mockLinuxWebViewCreation);
   tearDown(_clearLinuxWebViewCreationMock);
+
+  test('raw web resource events reach Linux capture callbacks', () async {
+    final LinuxWebViewController controller = LinuxWebViewController(
+      const PlatformWebViewControllerCreationParams(),
+    );
+    addTearDown(controller.dispose);
+    RawWebResourceRequest? capturedRequest;
+    RawWebResourceRequest? responseRequest;
+    RawWebResourceResponse? capturedResponse;
+
+    await controller.setOnRawWebResourceRequest((RawWebResourceRequest request) {
+      capturedRequest = request;
+    });
+    await controller.setOnRawWebResourceResponse((
+      RawWebResourceRequest request,
+      RawWebResourceResponse response,
+    ) {
+      responseRequest = request;
+      capturedResponse = response;
+    });
+    await controller.currentUrl();
+
+    await _emitLinuxWebViewEvent(<String, Object?>{
+      'type': 'webResourceRequest',
+      'url': 'https://example.test/api',
+      'method': 'GET',
+      'headers': <String, String>{'x-request': '1'},
+      'isForMainFrame': false,
+    });
+    await _emitLinuxWebViewEvent(<String, Object?>{
+      'type': 'webResourceResponse',
+      'captureId': 5,
+      'url': 'https://example.test/api',
+      'method': 'GET',
+      'requestHeaders': <String, String>{'x-request': '1'},
+      'isForMainFrame': false,
+      'statusCode': 200,
+      'headers': <String, String>{'Content-Type': 'application/json'},
+      'mimeType': 'application/json',
+      'contentLength': 3,
+    });
+    await _flushAsyncEvents();
+
+    expect(capturedRequest?.method, 'GET');
+    expect(capturedRequest?.headers['x-request'], '1');
+    expect(capturedRequest?.isForMainFrame, isFalse);
+    expect(
+      capturedRequest?.contentAccess,
+      WebResourceContentAccess.unsupported,
+    );
+    expect(responseRequest?.method, 'GET');
+    expect(capturedResponse?.statusCode, 200);
+    expect(capturedResponse?.mimeType, 'application/json');
+    expect(capturedResponse?.contentLength, 3);
+    expect(capturedResponse?.contentAccess, WebResourceContentAccess.onDemand);
+  });
+
+  test('Linux raw response content is lazy and memoized', () async {
+    var getContentCalls = 0;
+    final LinuxRawWebResourceResponse response = LinuxRawWebResourceResponse(
+      uri: Uri.parse('https://example.test/api'),
+      statusCode: 200,
+      headers: const <String, String>{},
+      mimeType: 'application/octet-stream',
+      contentLength: 3,
+      getContent: () async {
+        getContentCalls += 1;
+        return Uint8List.fromList(<int>[1, 2, 3]);
+      },
+    );
+
+    expect(getContentCalls, 0);
+    expect(await response.getContent(), <int>[1, 2, 3]);
+    expect(await response.getContent(), <int>[1, 2, 3]);
+    expect(getContentCalls, 1);
+  });
 
   test('registerWith sets the Linux WebView platform implementation', () {
     final WebViewPlatform? previousInstance = WebViewPlatform.instance;

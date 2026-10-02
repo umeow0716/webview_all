@@ -49,4 +49,33 @@ Widget build(BuildContext context) {
 }
 ```
 
+## Raw request and response capture (Windows / Linux)
+
+Windows and Linux can expose native WebView network metadata without eagerly
+copying response bodies into Dart. Other platforms report
+`WebResourceCaptureSupport.unsupported`.
+
+```dart
+if (controller.webResourceCaptureSupport ==
+    WebResourceCaptureSupport.supported) {
+  await controller.setOnRawWebResourceResponse((request, response) async {
+    if (response.mimeType == 'application/json') {
+      final bytes = await response.getContent();
+      // Decode only the responses your application actually needs.
+    }
+  });
+
+  await controller.setWebResourceCaptureEnabled(true);
+}
+```
+
+`RawWebResourceResponse.getContent()` is asynchronous and on-demand. Request
+body access is currently reported as `WebResourceContentAccess.unsupported` so
+native request streams are never consumed as a side effect of observation.
+Capture can be disabled at runtime with
+`setWebResourceCaptureEnabled(false)`; pending native content handles are then
+released. Pending lazy-content handles are bounded, so call `getContent()` from
+the capture callback when a response is worth retaining instead of holding raw
+response objects indefinitely.
+
 For detailed usage, API coverage, and platform limits, see the [Documentation](https://abandoft.github.io/webview_all).

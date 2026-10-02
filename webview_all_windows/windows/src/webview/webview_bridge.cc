@@ -143,6 +143,73 @@ WebviewBridge::WebviewBridge(flutter::BinaryMessenger *messenger,
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           messenger, channel_name,
           &flutter::StandardMethodCodec::GetInstance());
+  method_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue> &call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        const auto *arguments = call.arguments() == nullptr
+                                    ? nullptr
+                                    : std::get_if<flutter::EncodableMap>(
+                                          call.arguments());
+        if (call.method_name() == "setWebResourceCaptureEnabled") {
+          bool enabled = false;
+          if (arguments != nullptr) {
+            const auto found =
+                arguments->find(flutter::EncodableValue("enabled"));
+            if (found != arguments->end()) {
+              if (const auto value = std::get_if<bool>(&found->second)) {
+                enabled = *value;
+              }
+            }
+          }
+          if (webview_->SetWebResourceCaptureEnabled(enabled)) {
+            result->Success();
+          } else {
+            result->Error("web_resource_capture_error",
+                          "Unable to update WebView2 resource capture.");
+          }
+          return;
+        }
+
+        if (call.method_name() == "getWebResourceResponseContent") {
+          int64_t capture_id = -1;
+          if (arguments != nullptr) {
+            const auto found =
+                arguments->find(flutter::EncodableValue("captureId"));
+            if (found != arguments->end()) {
+              if (const auto value = std::get_if<int64_t>(&found->second)) {
+                capture_id = *value;
+              } else if (const auto value32 =
+                             std::get_if<int32_t>(&found->second)) {
+                capture_id = *value32;
+              }
+            }
+          }
+          if (capture_id <= 0) {
+            result->Error("web_resource_content_unavailable",
+                          "Invalid captured WebView2 response identifier.");
+            return;
+          }
+
+          auto shared_result =
+              std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>>(
+                  result.release());
+          webview_->GetWebResourceResponseContent(
+              static_cast<uint64_t>(capture_id),
+              [shared_result](bool success, std::vector<uint8_t> bytes) {
+                if (!success) {
+                  shared_result->Error(
+                      "web_resource_content_unavailable",
+                      "The captured WebView2 response body is no longer available.");
+                  return;
+                }
+                shared_result->Success(flutter::EncodableValue(bytes));
+              });
+          return;
+        }
+
+        result->NotImplemented();
+      });
 
   const std::string event_channel_name = channel_name + "/events";
   event_channel_ =
@@ -202,6 +269,56 @@ void WebviewBridge::RegisterEventHandlers() {
     });
     EmitEvent(event);
   });
+
+  webview_->OnRawWebResourceRequest(
+      [this](const WebviewRawWebResourceRequest &request) {
+        const auto event = flutter::EncodableValue(flutter::EncodableMap{
+            {flutter::EncodableValue(kEventType),
+             flutter::EncodableValue("webResourceRequest")},
+            {flutter::EncodableValue(kEventValue),
+             flutter::EncodableValue(flutter::EncodableMap{
+                 {flutter::EncodableValue("url"),
+                  flutter::EncodableValue(request.url)},
+                 {flutter::EncodableValue("method"),
+                  flutter::EncodableValue(request.method)},
+                 {flutter::EncodableValue("headers"),
+                  flutter::EncodableValue(
+                      HeadersToEncodableMap(request.headers))},
+             })},
+        });
+        EmitEvent(event);
+      });
+
+  webview_->OnRawWebResourceResponse(
+      [this](const WebviewRawWebResourceResponse &response) {
+        flutter::EncodableMap value{
+            {flutter::EncodableValue("captureId"),
+             flutter::EncodableValue(
+                 static_cast<int64_t>(response.capture_id))},
+            {flutter::EncodableValue("url"),
+             flutter::EncodableValue(response.request.url)},
+            {flutter::EncodableValue("method"),
+             flutter::EncodableValue(response.request.method)},
+            {flutter::EncodableValue("requestHeaders"),
+             flutter::EncodableValue(
+                 HeadersToEncodableMap(response.request.headers))},
+            {flutter::EncodableValue("statusCode"),
+             flutter::EncodableValue(response.status_code)},
+            {flutter::EncodableValue("responseHeaders"),
+             flutter::EncodableValue(HeadersToEncodableMap(response.headers))},
+        };
+        if (response.reason_phrase.has_value()) {
+          value[flutter::EncodableValue("reasonPhrase")] =
+              flutter::EncodableValue(response.reason_phrase.value());
+        }
+        const auto event = flutter::EncodableValue(flutter::EncodableMap{
+            {flutter::EncodableValue(kEventType),
+             flutter::EncodableValue("webResourceResponse")},
+            {flutter::EncodableValue(kEventValue),
+             flutter::EncodableValue(value)},
+        });
+        EmitEvent(event);
+      });
 
   webview_->OnHttpResponseError(
       [this](const WebviewHttpResponseError &http_error) {

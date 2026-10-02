@@ -33,6 +33,12 @@ void main() {
       main_file.ProxySchemeFilter;
       main_file.ProxySettings;
       main_file.WebViewPermissionResourceType;
+      main_file.RawWebResourceRequest;
+      main_file.RawWebResourceRequestCallback;
+      main_file.RawWebResourceResponse;
+      main_file.RawWebResourceResponseCallback;
+      main_file.WebResourceCaptureSupport;
+      main_file.WebResourceContentAccess;
       main_file.WebResourceRequest;
       main_file.WebResourceResponse;
       main_file.WebResourceError;

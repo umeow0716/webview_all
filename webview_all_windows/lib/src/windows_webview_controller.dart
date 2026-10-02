@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show PlatformException;
@@ -278,6 +279,8 @@ class WindowsWebViewController extends PlatformWebViewController {
   void Function(PlatformWebViewPermissionRequest)?
   _onPlatformPermissionRequestCallback;
   WindowsDownloadStartCallback? _onDownloadStartCallback;
+  RawWebResourceRequestCallback? _onRawWebResourceRequest;
+  RawWebResourceResponseCallback? _onRawWebResourceResponse;
 
   WindowsWebViewControllerCreationParams get _windowsParams =>
       params as WindowsWebViewControllerCreationParams;
@@ -427,6 +430,16 @@ class WindowsWebViewController extends PlatformWebViewController {
         native_webview.WebviewHttpResponseError error,
       ) {
         weakThis.target?._handleHttpResponseError(error);
+      }),
+      _webviewController.rawWebResourceRequest.listen((
+        native_webview.WebviewRawWebResourceRequest request,
+      ) {
+        weakThis.target?._handleRawWebResourceRequest(request);
+      }),
+      _webviewController.rawWebResourceResponse.listen((
+        native_webview.WebviewRawWebResourceResponse response,
+      ) {
+        weakThis.target?._handleRawWebResourceResponse(response);
       }),
       _webviewController.onDownloadEvent.listen((
         native_webview.WebviewDownloadEvent event,
@@ -583,6 +596,8 @@ class WindowsWebViewController extends PlatformWebViewController {
     _onJavaScriptTextInputDialogCallback = null;
     _onScrollPositionChangeCallback = null;
     _onPlatformPermissionRequestCallback = null;
+    _onRawWebResourceRequest = null;
+    _onRawWebResourceResponse = null;
     _consoleBridgeScriptId = null;
     _scrollBarStyleScriptId = null;
     _overScrollStyleScriptId = null;
@@ -662,6 +677,54 @@ class WindowsWebViewController extends PlatformWebViewController {
           headers: error.responseHeaders,
           reasonPhrase: error.reasonPhrase,
           mimeType: _mimeTypeFromResponseHeaders(error.responseHeaders),
+        ),
+      ),
+    );
+  }
+
+  void _handleRawWebResourceRequest(
+    native_webview.WebviewRawWebResourceRequest request,
+  ) {
+    final RawWebResourceRequestCallback? callback = _onRawWebResourceRequest;
+    final Uri? uri = Uri.tryParse(request.url);
+    if (callback == null || uri == null) {
+      return;
+    }
+    callback(
+      WindowsRawWebResourceRequest(
+        uri: uri,
+        method: request.method,
+        headers: request.headers,
+      ),
+    );
+  }
+
+  void _handleRawWebResourceResponse(
+    native_webview.WebviewRawWebResourceResponse response,
+  ) {
+    final RawWebResourceResponseCallback? callback = _onRawWebResourceResponse;
+    final Uri? uri = Uri.tryParse(response.url);
+    if (callback == null || uri == null) {
+      return;
+    }
+    final WindowsRawWebResourceRequest request = WindowsRawWebResourceRequest(
+      uri: uri,
+      method: response.method,
+      headers: response.requestHeaders,
+    );
+    callback(
+      request,
+      WindowsRawWebResourceResponse(
+        uri: uri,
+        statusCode: response.statusCode,
+        headers: response.responseHeaders,
+        reasonPhrase: response.reasonPhrase,
+        mimeType: _mimeTypeFromResponseHeaders(response.responseHeaders),
+        contentLength: _contentLengthFromResponseHeaders(
+          response.responseHeaders,
+        ),
+        getContent: () => _webviewController.getWebResourceResponseContent(
+          response.captureId,
         ),
       ),
     );
@@ -892,6 +955,15 @@ class WindowsWebViewController extends PlatformWebViewController {
           .trim()
           .toLowerCase();
       return mimeType.isEmpty ? null : mimeType;
+    }
+    return null;
+  }
+
+  int? _contentLengthFromResponseHeaders(Map<String, String> headers) {
+    for (final MapEntry<String, String> header in headers.entries) {
+      if (header.key.toLowerCase() == 'content-length') {
+        return int.tryParse(header.value.trim());
+      }
     }
     return null;
   }
@@ -1519,6 +1591,30 @@ ${params.functionBody}
     await _ensureInitialized();
     _userAgent = userAgent;
     await _webviewController.setUserAgent(userAgent);
+  }
+
+  @override
+  WebResourceCaptureSupport get webResourceCaptureSupport =>
+      WebResourceCaptureSupport.supported;
+
+  @override
+  Future<void> setWebResourceCaptureEnabled(bool enabled) async {
+    await _ensureInitialized();
+    await _webviewController.setWebResourceCaptureEnabled(enabled);
+  }
+
+  @override
+  Future<void> setOnRawWebResourceRequest(
+    RawWebResourceRequestCallback? onRequest,
+  ) async {
+    _onRawWebResourceRequest = onRequest;
+  }
+
+  @override
+  Future<void> setOnRawWebResourceResponse(
+    RawWebResourceResponseCallback? onResponse,
+  ) async {
+    _onRawWebResourceResponse = onResponse;
   }
 
   @override
@@ -2238,6 +2334,48 @@ class WindowsPlatformSslAuthError extends PlatformSslAuthError {
   Future<void> cancel() {
     return _onCancel();
   }
+}
+
+/// Raw WebView2 request metadata captured from WebResourceRequested.
+class WindowsRawWebResourceRequest extends RawWebResourceRequest {
+  WindowsRawWebResourceRequest({
+    required super.uri,
+    required super.method,
+    required super.headers,
+  }) : super(
+         isForMainFrame: null,
+         contentAccess: WebResourceContentAccess.unsupported,
+       );
+
+  @override
+  Future<Uint8List?> getContent() {
+    return Future<Uint8List?>.error(
+      UnsupportedError(
+        'Raw WebView2 request bodies are not consumed by this package because '
+        'reading the request IStream can alter request delivery semantics.',
+      ),
+    );
+  }
+}
+
+/// Raw WebView2 response metadata with lazy asynchronous body access.
+class WindowsRawWebResourceResponse extends RawWebResourceResponse {
+  WindowsRawWebResourceResponse({
+    required super.uri,
+    required super.statusCode,
+    required super.headers,
+    required super.reasonPhrase,
+    required super.mimeType,
+    required super.contentLength,
+    required Future<Uint8List?> Function() getContent,
+  }) : _getContent = getContent,
+       super(contentAccess: WebResourceContentAccess.onDemand);
+
+  final Future<Uint8List?> Function() _getContent;
+  late final Future<Uint8List?> _contentFuture = _getContent();
+
+  @override
+  Future<Uint8List?> getContent() => _contentFuture;
 }
 
 /// Windows implementation of [WebResourceRequest].

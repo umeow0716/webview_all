@@ -15,6 +15,7 @@ typedef struct {
   gchar *method;
   FlValue *headers;
   gboolean is_main_frame;
+  gint capture_id;
 } ResourceRequestDetails;
 
 enum class PendingRequestType {
@@ -32,6 +33,28 @@ typedef struct {
 } PendingRequestTimeout;
 
 constexpr guint kPendingRequestTimeoutSeconds = 30;
+constexpr guint kMaxCapturedWebResources = 256;
+
+static gint retain_captured_web_resource(LinuxWebView *webview,
+                                         WebKitWebResource *resource) {
+  gint capture_id = webview->next_web_resource_capture_id;
+  if (capture_id <= 0) {
+    capture_id = 1;
+  }
+  webview->next_web_resource_capture_id =
+      capture_id == G_MAXINT ? 1 : capture_id + 1;
+
+  gpointer key = GINT_TO_POINTER(capture_id);
+  g_hash_table_insert(webview->captured_web_resources, key,
+                      g_object_ref(resource));
+  g_queue_push_tail(webview->captured_web_resource_order, key);
+  while (g_queue_get_length(webview->captured_web_resource_order) >
+         kMaxCapturedWebResources) {
+    gpointer oldest = g_queue_pop_head(webview->captured_web_resource_order);
+    g_hash_table_remove(webview->captured_web_resources, oldest);
+  }
+  return capture_id;
+}
 
 static void destroy_pending_tls_error(gpointer data) {
   PendingTlsError *error = static_cast<PendingTlsError *>(data);
@@ -408,6 +431,62 @@ static void copy_response_header(const char *name, const char *value,
   fl_value_set_string_take(headers, name, fl_value_new_string(value));
 }
 
+static void update_resource_request_details(ResourceRequestDetails *details,
+                                            WebKitURIRequest *request) {
+  if (details == nullptr || request == nullptr) {
+    return;
+  }
+  g_free(details->method);
+  const gchar *method = webkit_uri_request_get_http_method(request);
+  details->method = g_strdup(method != nullptr ? method : "");
+  if (details->headers != nullptr) {
+    fl_value_unref(details->headers);
+  }
+  details->headers = fl_value_new_map();
+  SoupMessageHeaders *headers = webkit_uri_request_get_http_headers(request);
+  if (headers != nullptr) {
+    soup_message_headers_foreach(headers, copy_response_header,
+                                 details->headers);
+  }
+}
+
+static void emit_raw_web_resource_request(LinuxWebView *webview,
+                                          WebKitURIRequest *request,
+                                          ResourceRequestDetails *details) {
+  if (webview == nullptr || request == nullptr || details == nullptr ||
+      !webview->web_resource_capture_enabled || !webview->event_listening) {
+    return;
+  }
+
+  const gchar *uri = webkit_uri_request_get_uri(request);
+  FlValue *event = make_event("webResourceRequest");
+  fl_value_set_string_take(event, "url",
+                           fl_value_new_string(uri != nullptr ? uri : ""));
+  fl_value_set_string_take(
+      event, "method",
+      fl_value_new_string(details->method != nullptr ? details->method : ""));
+  fl_value_set_string_take(event, "headers",
+                           details->headers == nullptr
+                               ? fl_value_new_map()
+                               : fl_value_ref(details->headers));
+  fl_value_set_string_take(event, "isForMainFrame",
+                           fl_value_new_bool(details->is_main_frame));
+  send_event(webview, event);
+}
+
+static void resource_sent_request_cb(WebKitWebResource *resource,
+                                     WebKitURIRequest *request,
+                                     WebKitURIResponse *redirected_response,
+                                     gpointer user_data) {
+  (void)redirected_response;
+  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
+  ResourceRequestDetails *details =
+      static_cast<ResourceRequestDetails *>(
+          g_object_get_data(G_OBJECT(resource), kResourceRequestDetailsKey));
+  update_resource_request_details(details, request);
+  emit_raw_web_resource_request(webview, request, details);
+}
+
 static void resource_response_cb(WebKitWebResource *resource, GParamSpec *pspec,
                                  gpointer user_data) {
   WebKitWebView *web_view = WEBKIT_WEB_VIEW(user_data);
@@ -423,71 +502,117 @@ static void resource_response_cb(WebKitWebResource *resource, GParamSpec *pspec,
   }
 
   guint status_code = webkit_uri_response_get_status_code(response);
-  if (status_code < 400) {
-    return;
-  }
-
   const gchar *uri = webkit_uri_response_get_uri(response);
   if (uri == nullptr || *uri == '\0') {
     uri = webkit_web_resource_get_uri(resource);
   }
-
-  FlValue *event = make_event("httpError");
-  fl_value_set_string_take(event, "url",
-                           fl_value_new_string(uri != nullptr ? uri : ""));
-  fl_value_set_string_take(event, "statusCode",
-                           fl_value_new_int(static_cast<gint>(status_code)));
   const gchar *mime_type = webkit_uri_response_get_mime_type(response);
-  if (mime_type != nullptr) {
-    fl_value_set_string_take(event, "mimeType", fl_value_new_string(mime_type));
-  }
+  const guint64 content_length =
+      webkit_uri_response_get_content_length(response);
+
   FlValue *headers = fl_value_new_map();
   SoupMessageHeaders *raw_headers =
       webkit_uri_response_get_http_headers(response);
   if (raw_headers != nullptr) {
     soup_message_headers_foreach(raw_headers, copy_response_header, headers);
   }
-  fl_value_set_string_take(event, "headers", headers);
 
   ResourceRequestDetails *request_details =
       static_cast<ResourceRequestDetails *>(
           g_object_get_data(G_OBJECT(resource), kResourceRequestDetailsKey));
-  if (request_details != nullptr) {
-    fl_value_set_string_take(
-        event, "method",
-        fl_value_new_string(
-            request_details->method != nullptr ? request_details->method : ""));
-    fl_value_set_string_take(event, "requestHeaders",
-                             request_details->headers == nullptr
-                                 ? fl_value_new_map()
-                                 : fl_value_ref(request_details->headers));
-    fl_value_set_string_take(event, "isForMainFrame",
-                             fl_value_new_bool(request_details->is_main_frame));
+
+  if (webview->web_resource_capture_enabled) {
+    gint capture_id =
+        request_details != nullptr ? request_details->capture_id : -1;
+    if (capture_id <= 0 ||
+        g_hash_table_lookup(webview->captured_web_resources,
+                            GINT_TO_POINTER(capture_id)) == nullptr) {
+      capture_id = retain_captured_web_resource(webview, resource);
+      if (request_details != nullptr) {
+        request_details->capture_id = capture_id;
+      }
+    }
+
+    FlValue *event = make_event("webResourceResponse");
+    fl_value_set_string_take(event, "captureId", fl_value_new_int(capture_id));
+    fl_value_set_string_take(event, "url",
+                             fl_value_new_string(uri != nullptr ? uri : ""));
+    fl_value_set_string_take(event, "statusCode",
+                             fl_value_new_int(static_cast<gint>(status_code)));
+    fl_value_set_string_take(event, "headers", fl_value_ref(headers));
+    if (mime_type != nullptr) {
+      fl_value_set_string_take(event, "mimeType", fl_value_new_string(mime_type));
+    }
+    if (content_length <= static_cast<guint64>(G_MAXINT64)) {
+      fl_value_set_string_take(
+          event, "contentLength",
+          fl_value_new_int(static_cast<gint64>(content_length)));
+    }
+    if (request_details != nullptr) {
+      fl_value_set_string_take(
+          event, "method",
+          fl_value_new_string(request_details->method != nullptr
+                                  ? request_details->method
+                                  : ""));
+      fl_value_set_string_take(event, "requestHeaders",
+                               request_details->headers == nullptr
+                                   ? fl_value_new_map()
+                                   : fl_value_ref(request_details->headers));
+      fl_value_set_string_take(
+          event, "isForMainFrame",
+          fl_value_new_bool(request_details->is_main_frame));
+    }
+    send_event(webview, event);
   }
-  send_event(webview, event);
+
+  if (status_code >= 400) {
+    FlValue *event = make_event("httpError");
+    fl_value_set_string_take(event, "url",
+                             fl_value_new_string(uri != nullptr ? uri : ""));
+    fl_value_set_string_take(event, "statusCode",
+                             fl_value_new_int(static_cast<gint>(status_code)));
+    if (mime_type != nullptr) {
+      fl_value_set_string_take(event, "mimeType", fl_value_new_string(mime_type));
+    }
+    fl_value_set_string_take(event, "headers", fl_value_ref(headers));
+    if (request_details != nullptr) {
+      fl_value_set_string_take(
+          event, "method",
+          fl_value_new_string(request_details->method != nullptr
+                                  ? request_details->method
+                                  : ""));
+      fl_value_set_string_take(event, "requestHeaders",
+                               request_details->headers == nullptr
+                                   ? fl_value_new_map()
+                                   : fl_value_ref(request_details->headers));
+      fl_value_set_string_take(
+          event, "isForMainFrame",
+          fl_value_new_bool(request_details->is_main_frame));
+    }
+    send_event(webview, event);
+  }
+
+  fl_value_unref(headers);
 }
 
 static void resource_load_started_cb(WebKitWebView *widget,
                                      WebKitWebResource *resource,
                                      WebKitURIRequest *request,
                                      gpointer user_data) {
+  LinuxWebView *webview = static_cast<LinuxWebView *>(user_data);
   ResourceRequestDetails *details = g_new0(ResourceRequestDetails, 1);
-  const gchar *method = webkit_uri_request_get_http_method(request);
-  details->method = g_strdup(method != nullptr ? method : "");
-  details->headers = fl_value_new_map();
-  SoupMessageHeaders *headers = webkit_uri_request_get_http_headers(request);
-  if (headers != nullptr) {
-    soup_message_headers_foreach(headers, copy_response_header,
-                                 details->headers);
-  }
   details->is_main_frame =
       webkit_web_view_get_main_resource(widget) == resource;
+  details->capture_id = -1;
+  update_resource_request_details(details, request);
   g_object_set_data_full(G_OBJECT(resource), kResourceRequestDetailsKey,
                          details, destroy_resource_request_details);
 
+  g_signal_connect(resource, "sent-request",
+                   G_CALLBACK(resource_sent_request_cb), webview);
   g_signal_connect_object(resource, "notify::response",
                           G_CALLBACK(resource_response_cb), widget,
-                          static_cast<GConnectFlags>(0));
+                          G_CONNECT_DEFAULT);
 }
 
 static gboolean authenticate_cb(WebKitWebView *widget,
@@ -809,6 +934,8 @@ void destroy_linux_webview(gpointer data) {
   g_hash_table_destroy(webview->js_channel_signal_ids);
   g_hash_table_destroy(webview->js_channels);
   g_hash_table_destroy(webview->user_scripts);
+  g_hash_table_destroy(webview->captured_web_resources);
+  g_queue_free(webview->captured_web_resource_order);
   g_ptr_array_unref(webview->user_script_order);
   g_free(webview);
 }
@@ -849,6 +976,12 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self) {
       g_str_hash, g_str_equal, g_free,
       reinterpret_cast<GDestroyNotify>(webkit_user_script_unref));
   webview->user_script_order = g_ptr_array_new_with_free_func(g_free);
+  webview->captured_web_resources = g_hash_table_new_full(
+      g_direct_hash, g_direct_equal, nullptr,
+      reinterpret_cast<GDestroyNotify>(g_object_unref));
+  webview->captured_web_resource_order = g_queue_new();
+  webview->next_web_resource_capture_id = 1;
+  webview->web_resource_capture_enabled = FALSE;
   webview->next_request_id = 1;
   webview->java_script_alert_dialog_enabled = FALSE;
   webview->java_script_confirm_dialog_enabled = FALSE;

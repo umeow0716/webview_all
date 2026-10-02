@@ -29,6 +29,7 @@ export 'platform_webview_widget_creation_params.dart';
 export 'scroll_position_change.dart';
 export 'url_change.dart';
 export 'web_resource_error.dart';
+export 'web_resource_capture.dart';
 export 'web_resource_request.dart';
 export 'web_resource_response.dart';
 export 'webview_cookie.dart';

@@ -398,6 +398,48 @@ $scopedSource''';
     );
   }
 
+  /// Raw web resource capture support for the current platform.
+  WebResourceCaptureSupport get webResourceCaptureSupport =>
+      WebResourceCaptureSupport.unsupported;
+
+  /// Enables or disables raw web resource capture at runtime.
+  ///
+  /// Disabling capture should stop new capture events and release native body
+  /// handles retained for lazy [RawWebResourceRequest.getContent] or
+  /// [RawWebResourceResponse.getContent] calls.
+  Future<void> setWebResourceCaptureEnabled(bool enabled) {
+    if (!enabled) {
+      return Future<void>.value();
+    }
+    throw UnsupportedError(
+      'Raw web resource capture is not supported on the current platform.',
+    );
+  }
+
+  /// Sets the callback for captured raw requests.
+  Future<void> setOnRawWebResourceRequest(
+    RawWebResourceRequestCallback? onRequest,
+  ) {
+    if (onRequest == null) {
+      return Future<void>.value();
+    }
+    throw UnsupportedError(
+      'Raw web resource capture is not supported on the current platform.',
+    );
+  }
+
+  /// Sets the callback for captured raw responses.
+  Future<void> setOnRawWebResourceResponse(
+    RawWebResourceResponseCallback? onResponse,
+  ) {
+    if (onResponse == null) {
+      return Future<void>.value();
+    }
+    throw UnsupportedError(
+      'Raw web resource capture is not supported on the current platform.',
+    );
+  }
+
   /// Sets a callback that notifies the host application that web content is
   /// requesting permission to access the specified resources.
   Future<void> setOnPlatformPermissionRequest(

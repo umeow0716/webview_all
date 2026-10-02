@@ -439,6 +439,29 @@ class WebViewController {
     return platform.setOnConsoleMessage(onConsoleMessage);
   }
 
+  /// Raw web resource capture support for the current platform.
+  WebResourceCaptureSupport get webResourceCaptureSupport =>
+      platform.webResourceCaptureSupport;
+
+  /// Enables or disables raw request/response capture at runtime.
+  Future<void> setWebResourceCaptureEnabled(bool enabled) {
+    return platform.setWebResourceCaptureEnabled(enabled);
+  }
+
+  /// Sets the callback for raw requests captured by the native WebView.
+  Future<void> setOnRawWebResourceRequest(
+    RawWebResourceRequestCallback? onRequest,
+  ) {
+    return platform.setOnRawWebResourceRequest(onRequest);
+  }
+
+  /// Sets the callback for raw responses captured by the native WebView.
+  Future<void> setOnRawWebResourceResponse(
+    RawWebResourceResponseCallback? onResponse,
+  ) {
+    return platform.setOnRawWebResourceResponse(onResponse);
+  }
+
   /// Sets a callback that notifies the host application that the web page
   /// wants to display a JavaScript alert() dialog.
   Future<void> setOnJavaScriptAlertDialog(

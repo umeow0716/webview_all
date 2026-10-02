@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -168,6 +169,8 @@ class LinuxWebViewController extends PlatformWebViewController {
   _onJavaScriptTextInputDialog;
   LinuxFileSelectorCallback? _onShowFileSelectorCallback;
   LinuxDownloadStartCallback? _onDownloadStartCallback;
+  RawWebResourceRequestCallback? _onRawWebResourceRequest;
+  RawWebResourceResponseCallback? _onRawWebResourceResponse;
 
   Future<void> _initialize(
     WeakReference<LinuxWebViewController> weakThis,
@@ -640,6 +643,37 @@ class LinuxWebViewController extends PlatformWebViewController {
   Future<String?> getUserAgent() async {
     await _ensureReady();
     return _userAgent ?? await _channel!.invokeMethod<String>('getUserAgent');
+  }
+
+  @override
+  WebResourceCaptureSupport get webResourceCaptureSupport =>
+      WebResourceCaptureSupport.supported;
+
+  @override
+  Future<void> setWebResourceCaptureEnabled(bool enabled) {
+    return _invoke<void>('setWebResourceCaptureEnabled', <String, Object?>{
+      'enabled': enabled,
+    });
+  }
+
+  @override
+  Future<void> setOnRawWebResourceRequest(
+    RawWebResourceRequestCallback? onRequest,
+  ) async {
+    _onRawWebResourceRequest = onRequest;
+  }
+
+  @override
+  Future<void> setOnRawWebResourceResponse(
+    RawWebResourceResponseCallback? onResponse,
+  ) async {
+    _onRawWebResourceResponse = onResponse;
+  }
+
+  Future<Uint8List?> _getRawWebResourceResponseContent(int captureId) {
+    return _invoke<Uint8List>('getWebResourceResponseContent', <String, Object?>{
+      'captureId': captureId,
+    });
   }
 
   @override

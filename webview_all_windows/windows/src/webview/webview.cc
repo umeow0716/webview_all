@@ -83,6 +83,60 @@ ReadHttpHeaders(ICoreWebView2HttpResponseHeaders *headers) {
   return ReadHttpHeaders(iterator.get());
 }
 
+
+std::optional<WebviewRawWebResourceRequest>
+ReadRawWebResourceRequest(ICoreWebView2WebResourceRequest *request) {
+  if (request == nullptr) {
+    return std::nullopt;
+  }
+
+  wil::unique_cotaskmem_string wuri;
+  if (FAILED(request->get_Uri(&wuri)) || wuri == nullptr) {
+    return std::nullopt;
+  }
+
+  WebviewRawWebResourceRequest result;
+  result.url = util::Utf8FromUtf16(wuri.get());
+
+  wil::unique_cotaskmem_string wmethod;
+  if (SUCCEEDED(request->get_Method(&wmethod)) && wmethod != nullptr) {
+    result.method = util::Utf8FromUtf16(wmethod.get());
+  }
+
+  wil::com_ptr<ICoreWebView2HttpRequestHeaders> request_headers;
+  if (SUCCEEDED(request->get_Headers(request_headers.put()))) {
+    result.headers = ReadHttpHeaders(request_headers.get());
+  }
+  return result;
+}
+
+bool ReadContentStream(IStream *stream, std::vector<uint8_t> *bytes) {
+  if (bytes == nullptr) {
+    return false;
+  }
+  bytes->clear();
+  if (stream == nullptr) {
+    return true;
+  }
+
+  constexpr ULONG kBufferSize = 16 * 1024;
+  uint8_t buffer[kBufferSize];
+  while (true) {
+    ULONG read = 0;
+    const HRESULT result = stream->Read(buffer, kBufferSize, &read);
+    if (FAILED(result)) {
+      bytes->clear();
+      return false;
+    }
+    if (read > 0) {
+      bytes->insert(bytes->end(), buffer, buffer + read);
+    }
+    if (read == 0 || result == S_FALSE) {
+      return true;
+    }
+  }
+}
+
 double GetFlutterScrollOffsetMultiplier() {
   constexpr UINT kDefaultLinesPerScroll = 3;
   UINT lines_per_scroll = kDefaultLinesPerScroll;
@@ -506,6 +560,14 @@ void Webview::RegisterEventHandlers() {
                     return S_OK;
                   }
                   const std::string url = util::Utf8FromUtf16(wuri.get());
+                  if (web_resource_capture_enabled_ &&
+                      raw_web_resource_request_callback_) {
+                    const auto raw_request =
+                        ReadRawWebResourceRequest(request.get());
+                    if (raw_request.has_value()) {
+                      raw_web_resource_request_callback_(raw_request.value());
+                    }
+                  }
                   auto pending = TakePendingNetworkNavigationPolicy(url);
                   if (!pending.has_value() ||
                       !navigation_requested_callback_) {
@@ -586,6 +648,10 @@ void Webview::RegisterEventHandlers() {
             [this](ICoreWebView2 *sender,
                    ICoreWebView2WebResourceResponseReceivedEventArgs *args)
                 -> HRESULT {
+              if (args == nullptr) {
+                return S_OK;
+              }
+
               wil::com_ptr<ICoreWebView2WebResourceResponseView> response;
               if (FAILED(args->get_Response(response.put())) || !response) {
                 return S_OK;
@@ -596,39 +662,14 @@ void Webview::RegisterEventHandlers() {
                 return S_OK;
               }
 
-              if (!http_response_error_callback_) {
+              const auto raw_request = ReadRawWebResourceRequest(request.get());
+              if (!raw_request.has_value()) {
                 return S_OK;
               }
 
               int status_code = 0;
-              if (FAILED(response->get_StatusCode(&status_code)) ||
-                  status_code < 400) {
+              if (FAILED(response->get_StatusCode(&status_code))) {
                 return S_OK;
-              }
-
-              wil::unique_cotaskmem_string wuri;
-              if (FAILED(request->get_Uri(&wuri))) {
-                return S_OK;
-              }
-
-              std::string url;
-              if (wuri != nullptr) {
-                url = util::Utf8FromUtf16(wuri.get());
-              }
-
-              std::string method;
-              wil::unique_cotaskmem_string wmethod;
-              if (SUCCEEDED(request->get_Method(&wmethod)) &&
-                  wmethod != nullptr) {
-                method = util::Utf8FromUtf16(wmethod.get());
-              }
-
-              std::map<std::string, std::string> request_headers;
-              wil::com_ptr<ICoreWebView2HttpRequestHeaders>
-                  native_request_headers;
-              if (SUCCEEDED(
-                      request->get_Headers(native_request_headers.put()))) {
-                request_headers = ReadHttpHeaders(native_request_headers.get());
               }
 
               std::map<std::string, std::string> response_headers;
@@ -647,9 +688,34 @@ void Webview::RegisterEventHandlers() {
                 reason_phrase = util::Utf8FromUtf16(wreason_phrase.get());
               }
 
-              http_response_error_callback_({url, method, request_headers,
-                                             status_code, response_headers,
-                                             reason_phrase});
+              if (web_resource_capture_enabled_ &&
+                  raw_web_resource_response_callback_) {
+                uint64_t capture_id = next_web_resource_capture_id_++;
+                if (next_web_resource_capture_id_ == 0) {
+                  next_web_resource_capture_id_ = 1;
+                }
+                captured_web_resource_responses_[capture_id] = response;
+                captured_web_resource_response_order_.push_back(capture_id);
+                constexpr size_t kMaxCapturedWebResourceResponses = 256;
+                while (captured_web_resource_response_order_.size() >
+                       kMaxCapturedWebResourceResponses) {
+                  const uint64_t oldest =
+                      captured_web_resource_response_order_.front();
+                  captured_web_resource_response_order_.pop_front();
+                  captured_web_resource_responses_.erase(oldest);
+                }
+
+                raw_web_resource_response_callback_({
+                    capture_id, raw_request.value(), status_code,
+                    response_headers, reason_phrase});
+              }
+
+              if (status_code >= 400 && http_response_error_callback_) {
+                http_response_error_callback_(
+                    {raw_request->url, raw_request->method,
+                     raw_request->headers, status_code, response_headers,
+                     reason_phrase});
+              }
               return S_OK;
             })
             .Get(),
@@ -1527,6 +1593,89 @@ void Webview::SetPopupWindowPolicy(WebviewPopupWindowPolicy policy) {
 void Webview::SetNavigationRequestCallbacksEnabled(bool enabled) {
   navigation_request_callbacks_enabled_ = enabled;
   InvalidatePendingNavigationRequests();
+}
+
+bool Webview::SetWebResourceCaptureEnabled(bool enabled) {
+  if (!IsValid()) {
+    return false;
+  }
+  if (web_resource_capture_enabled_ == enabled) {
+    return true;
+  }
+
+  HRESULT result = E_FAIL;
+  auto webview22 = webview_.try_query<ICoreWebView2_22>();
+  if (enabled && webview22) {
+    result = webview22->AddWebResourceRequestedFilterWithRequestSourceKinds(
+        L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+        COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_DOCUMENT);
+    if (SUCCEEDED(result)) {
+      web_resource_capture_uses_source_kinds_filter_ = true;
+    }
+  }
+  if (enabled && FAILED(result)) {
+    result = webview_->AddWebResourceRequestedFilter(
+        L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+    if (SUCCEEDED(result)) {
+      web_resource_capture_uses_source_kinds_filter_ = false;
+    }
+  } else if (!enabled && web_resource_capture_uses_source_kinds_filter_) {
+    if (!webview22) {
+      return false;
+    }
+    result = webview22->RemoveWebResourceRequestedFilterWithRequestSourceKinds(
+        L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+        COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_DOCUMENT);
+  } else if (!enabled) {
+    result = webview_->RemoveWebResourceRequestedFilter(
+        L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+  }
+  if (FAILED(result)) {
+    return false;
+  }
+
+  web_resource_capture_enabled_ = enabled;
+  if (!enabled) {
+    web_resource_capture_uses_source_kinds_filter_ = false;
+    captured_web_resource_responses_.clear();
+    captured_web_resource_response_order_.clear();
+  }
+  return true;
+}
+
+void Webview::GetWebResourceResponseContent(
+    uint64_t capture_id, WebResourceContentCallback callback) {
+  const auto found = captured_web_resource_responses_.find(capture_id);
+  if (found == captured_web_resource_responses_.end() || !found->second) {
+    callback(false, {});
+    return;
+  }
+
+  wil::com_ptr<ICoreWebView2WebResourceResponseView> response = found->second;
+  captured_web_resource_responses_.erase(found);
+
+  auto completion =
+      std::make_shared<WebResourceContentCallback>(std::move(callback));
+  const HRESULT result = response->GetContent(
+      Callback<ICoreWebView2WebResourceResponseViewGetContentCompletedHandler>(
+          [response = std::move(response), completion](
+              HRESULT error_code, IStream *content) mutable -> HRESULT {
+            if (FAILED(error_code)) {
+              (*completion)(false, {});
+              return S_OK;
+            }
+            std::vector<uint8_t> bytes;
+            if (!ReadContentStream(content, &bytes)) {
+              (*completion)(false, {});
+              return S_OK;
+            }
+            (*completion)(true, std::move(bytes));
+            return S_OK;
+          })
+          .Get());
+  if (FAILED(result)) {
+    (*completion)(false, {});
+  }
 }
 
 void Webview::SetJavaScriptDialogCallbacksEnabled(bool alert, bool confirm,

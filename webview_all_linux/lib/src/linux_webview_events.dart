@@ -46,6 +46,51 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
           LinuxWebResourceError.fromMap(event),
         );
         break;
+      case 'webResourceRequest':
+        final RawWebResourceRequestCallback? callback =
+            _onRawWebResourceRequest;
+        if (callback != null) {
+          final Uri? uri = Uri.tryParse('${event['url'] ?? ''}');
+          if (uri != null) {
+            callback(
+              LinuxRawWebResourceRequest(
+                uri: uri,
+                method: event['method'] as String?,
+                headers: _stringMapFromEvent(event['headers']),
+                isForMainFrame: event['isForMainFrame'] as bool?,
+              ),
+            );
+          }
+        }
+        break;
+      case 'webResourceResponse':
+        final RawWebResourceResponseCallback? callback =
+            _onRawWebResourceResponse;
+        if (callback != null) {
+          final Uri? uri = Uri.tryParse('${event['url'] ?? ''}');
+          final int? captureId = (event['captureId'] as num?)?.toInt();
+          if (uri != null && captureId != null) {
+            final LinuxRawWebResourceRequest request =
+                LinuxRawWebResourceRequest(
+                  uri: uri,
+                  method: event['method'] as String?,
+                  headers: _stringMapFromEvent(event['requestHeaders']),
+                  isForMainFrame: event['isForMainFrame'] as bool?,
+                );
+            final LinuxRawWebResourceResponse response =
+                LinuxRawWebResourceResponse(
+                  uri: uri,
+                  statusCode: (event['statusCode'] as num?)?.toInt() ?? 0,
+                  headers: _stringMapFromEvent(event['headers']),
+                  mimeType: event['mimeType'] as String?,
+                  contentLength: (event['contentLength'] as num?)?.toInt(),
+                  getContent: () =>
+                      _getRawWebResourceResponseContent(captureId),
+                );
+            callback(request, response);
+          }
+        }
+        break;
       case 'httpError':
         if (_navigationDelegate != null) {
           final Uri? uri = Uri.tryParse('${event['url'] ?? ''}');

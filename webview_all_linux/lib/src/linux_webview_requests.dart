@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:webview_platform_interface/webview_platform_interface.dart';
 
@@ -26,6 +27,45 @@ class LinuxWebResourceResponse extends WebResourceResponse {
   });
 
   final String? mimeType;
+}
+
+class LinuxRawWebResourceRequest extends RawWebResourceRequest {
+  LinuxRawWebResourceRequest({
+    required super.uri,
+    required super.method,
+    required super.headers,
+    required super.isForMainFrame,
+  }) : super(contentAccess: WebResourceContentAccess.unsupported);
+
+  @override
+  Future<Uint8List?> getContent() {
+    return Future<Uint8List?>.error(
+      UnsupportedError(
+        'WebKitGTK does not expose request body content for captured resources.',
+      ),
+    );
+  }
+}
+
+class LinuxRawWebResourceResponse extends RawWebResourceResponse {
+  LinuxRawWebResourceResponse({
+    required super.uri,
+    required super.statusCode,
+    required super.headers,
+    required super.mimeType,
+    required super.contentLength,
+    required Future<Uint8List?> Function() getContent,
+  }) : _getContent = getContent,
+       super(
+         reasonPhrase: null,
+         contentAccess: WebResourceContentAccess.onDemand,
+       );
+
+  final Future<Uint8List?> Function() _getContent;
+  late final Future<Uint8List?> _contentFuture = _getContent();
+
+  @override
+  Future<Uint8List?> getContent() => _contentFuture;
 }
 
 class LinuxPlatformWebViewPermissionRequest

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ui';
+import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -36,6 +37,38 @@ class WebviewDownloadEvent {
     this.bytesReceived,
     this.totalBytesToReceive,
   );
+}
+
+class WebviewRawWebResourceRequest {
+  final String url;
+  final String? method;
+  final Map<String, String> headers;
+
+  const WebviewRawWebResourceRequest(
+    this.url, {
+    this.method,
+    this.headers = const <String, String>{},
+  });
+}
+
+class WebviewRawWebResourceResponse {
+  final int captureId;
+  final String url;
+  final String? method;
+  final Map<String, String> requestHeaders;
+  final int statusCode;
+  final Map<String, String> responseHeaders;
+  final String? reasonPhrase;
+
+  const WebviewRawWebResourceResponse({
+    required this.captureId,
+    required this.url,
+    required this.statusCode,
+    this.method,
+    this.requestHeaders = const <String, String>{},
+    this.responseHeaders = const <String, String>{},
+    this.reasonPhrase,
+  });
 }
 
 class WebviewHttpResponseError {
@@ -266,6 +299,15 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   _httpResponseErrorStreamController =
       StreamController<WebviewHttpResponseError>();
 
+
+  final StreamController<WebviewRawWebResourceRequest>
+  _rawWebResourceRequestStreamController =
+      StreamController<WebviewRawWebResourceRequest>.broadcast();
+
+  final StreamController<WebviewRawWebResourceResponse>
+  _rawWebResourceResponseStreamController =
+      StreamController<WebviewRawWebResourceResponse>.broadcast();
+
   /// A stream reflecting the current loading state.
   Stream<LoadingState> get loadingState => _loadingStateStreamController.stream;
 
@@ -278,6 +320,13 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   /// A stream reflecting HTTP response status errors.
   Stream<WebviewHttpResponseError> get httpResponseError =>
       _httpResponseErrorStreamController.stream;
+
+
+  Stream<WebviewRawWebResourceRequest> get rawWebResourceRequest =>
+      _rawWebResourceRequestStreamController.stream;
+
+  Stream<WebviewRawWebResourceResponse> get rawWebResourceResponse =>
+      _rawWebResourceResponseStreamController.stream;
 
   final StreamController<HistoryChanged> _historyChangedStreamController =
       StreamController<HistoryChanged>();
@@ -352,6 +401,41 @@ class WebviewController extends ValueNotifier<WebviewValue> {
           case 'onLoadError':
             final value = WebErrorStatus.values[map['value']];
             _onLoadErrorStreamController.add(value);
+            break;
+          case 'webResourceRequest':
+            final value =
+                map['value'] as Map<dynamic, dynamic>? ??
+                const <dynamic, dynamic>{};
+            _rawWebResourceRequestStreamController.add(
+              WebviewRawWebResourceRequest(
+                '${value['url'] ?? ''}',
+                method: value['method'] as String?,
+                headers: _stringMapFromEvent(value['headers']),
+              ),
+            );
+            break;
+          case 'webResourceResponse':
+            final value =
+                map['value'] as Map<dynamic, dynamic>? ??
+                const <dynamic, dynamic>{};
+            final int? captureId = (value['captureId'] as num?)?.toInt();
+            if (captureId != null) {
+              _rawWebResourceResponseStreamController.add(
+                WebviewRawWebResourceResponse(
+                  captureId: captureId,
+                  url: '${value['url'] ?? ''}',
+                  statusCode: (value['statusCode'] as num?)?.toInt() ?? 0,
+                  method: value['method'] as String?,
+                  requestHeaders: _stringMapFromEvent(
+                    value['requestHeaders'],
+                  ),
+                  responseHeaders: _stringMapFromEvent(
+                    value['responseHeaders'],
+                  ),
+                  reasonPhrase: value['reasonPhrase'] as String?,
+                ),
+              );
+            }
             break;
           case 'httpError':
             final value =
@@ -676,6 +760,8 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     unawaited(_downloadEventStreamController.close());
     unawaited(_onLoadErrorStreamController.close());
     unawaited(_httpResponseErrorStreamController.close());
+    unawaited(_rawWebResourceRequestStreamController.close());
+    unawaited(_rawWebResourceResponseStreamController.close());
     unawaited(_historyChangedStreamController.close());
     unawaited(_securityStateChangedStreamController.close());
     unawaited(_titleStreamController.close());
@@ -683,6 +769,24 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     unawaited(_focusEvents.close());
     unawaited(_webMessageStreamController.close());
     unawaited(_containsFullScreenElementChangedStreamController.close());
+  }
+
+  Future<void> setWebResourceCaptureEnabled(bool enabled) async {
+    _throwIfDisposed();
+    await ready;
+    await _methodChannel.invokeMethod<void>(
+      'setWebResourceCaptureEnabled',
+      <String, Object?>{'enabled': enabled},
+    );
+  }
+
+  Future<Uint8List?> getWebResourceResponseContent(int captureId) async {
+    _throwIfDisposed();
+    await ready;
+    return _methodChannel.invokeMethod<Uint8List>(
+      'getWebResourceResponseContent',
+      <String, Object?>{'captureId': captureId},
+    );
   }
 
   /// Loads the given [url].

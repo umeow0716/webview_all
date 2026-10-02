@@ -1,5 +1,6 @@
 ## 1.4.4
 
+* Add opt-in raw request/response capture on Windows and Linux with lazy response-body access.
 * Fix a certificate API deprecation warning when building for iOS and macOS.
 * Block HTTP resources on HTTPS pages by default on OHOS.
 

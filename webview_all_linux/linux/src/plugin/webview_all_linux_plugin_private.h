@@ -45,6 +45,10 @@ typedef struct _LinuxWebView {
   GHashTable *js_channels;
   GHashTable *user_scripts;
   GPtrArray *user_script_order;
+  GHashTable *captured_web_resources;
+  GQueue *captured_web_resource_order;
+  gint next_web_resource_capture_id;
+  gboolean web_resource_capture_enabled;
   gint next_request_id;
   gboolean console_enabled;
   gboolean scroll_enabled;

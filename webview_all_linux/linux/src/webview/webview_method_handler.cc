@@ -375,6 +375,44 @@ void load_request_with_soup(WebKitWebView *web_view, FlMethodCall *method_call,
   g_object_unref(message);
 }
 
+
+typedef struct {
+  FlMethodCall *method_call;
+  WebKitWebResource *resource;
+} PendingWebResourceContentRequest;
+
+void destroy_pending_web_resource_content_request(
+    PendingWebResourceContentRequest *pending) {
+  if (pending == nullptr) {
+    return;
+  }
+  g_clear_object(&pending->method_call);
+  g_clear_object(&pending->resource);
+  g_free(pending);
+}
+
+void web_resource_get_data_finished_cb(GObject *object, GAsyncResult *result,
+                                       gpointer user_data) {
+  PendingWebResourceContentRequest *pending =
+      static_cast<PendingWebResourceContentRequest *>(user_data);
+  gsize length = 0;
+  GError *error = nullptr;
+  guchar *data = webkit_web_resource_get_data_finish(
+      WEBKIT_WEB_RESOURCE(object), result, &length, &error);
+  if (error != nullptr) {
+    respond(pending->method_call,
+            error_response("web_resource_content_error", error->message));
+    g_clear_error(&error);
+  } else if (data == nullptr) {
+    respond(pending->method_call, success_response(fl_value_new_null()));
+  } else {
+    respond(pending->method_call,
+            success_response(fl_value_new_uint8_list(data, length)));
+  }
+  g_free(data);
+  destroy_pending_web_resource_content_request(pending);
+}
+
 } // namespace
 
 void instance_method_call_cb(FlMethodChannel *channel,
@@ -940,6 +978,40 @@ void instance_method_call_cb(FlMethodChannel *channel,
     respond(method_call, success_response(user_agent != nullptr
                                               ? fl_value_new_string(user_agent)
                                               : fl_value_new_null()));
+    return;
+  }
+
+  if (strcmp(method, "setWebResourceCaptureEnabled") == 0) {
+    const gboolean enabled = map_lookup_bool(args, "enabled", FALSE);
+    webview->web_resource_capture_enabled = enabled;
+    if (!enabled) {
+      g_hash_table_remove_all(webview->captured_web_resources);
+      g_queue_clear(webview->captured_web_resource_order);
+    }
+    respond(method_call, success_response());
+    return;
+  }
+
+  if (strcmp(method, "getWebResourceResponseContent") == 0) {
+    const gint capture_id =
+        static_cast<gint>(map_lookup_int(args, "captureId", -1));
+    gpointer key = GINT_TO_POINTER(capture_id);
+    WebKitWebResource *resource = WEBKIT_WEB_RESOURCE(
+        g_hash_table_lookup(webview->captured_web_resources, key));
+    if (capture_id <= 0 || resource == nullptr) {
+      respond(method_call,
+              error_response("web_resource_content_unavailable",
+                             "The captured response body is no longer available."));
+      return;
+    }
+
+    PendingWebResourceContentRequest *pending =
+        g_new0(PendingWebResourceContentRequest, 1);
+    pending->method_call = FL_METHOD_CALL(g_object_ref(method_call));
+    pending->resource = WEBKIT_WEB_RESOURCE(g_object_ref(resource));
+    g_hash_table_remove(webview->captured_web_resources, key);
+    webkit_web_resource_get_data(resource, nullptr,
+                                 web_resource_get_data_finished_cb, pending);
     return;
   }
 

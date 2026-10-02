@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -29,6 +30,86 @@ void main() {
     } finally {
       _clearWindowsWebViewCreationMock();
     }
+  });
+
+  test('raw web resource events reach Windows capture callbacks', () async {
+    final WindowsWebViewController controller = _createWindowsController(
+      const PlatformWebViewControllerCreationParams(),
+    );
+    RawWebResourceRequest? capturedRequest;
+    RawWebResourceRequest? responseRequest;
+    RawWebResourceResponse? capturedResponse;
+
+    await controller.setOnRawWebResourceRequest((RawWebResourceRequest request) {
+      capturedRequest = request;
+    });
+    await controller.setOnRawWebResourceResponse((
+      RawWebResourceRequest request,
+      RawWebResourceResponse response,
+    ) {
+      responseRequest = request;
+      capturedResponse = response;
+    });
+    await controller.currentUrl();
+
+    await _emitWindowsWebViewEvent(<String, Object?>{
+      'type': 'webResourceRequest',
+      'value': <String, Object?>{
+        'url': 'https://example.test/api',
+        'method': 'POST',
+        'headers': <String, String>{'x-request': '1'},
+      },
+    });
+    await _emitWindowsWebViewEvent(<String, Object?>{
+      'type': 'webResourceResponse',
+      'value': <String, Object?>{
+        'captureId': 7,
+        'url': 'https://example.test/api',
+        'method': 'POST',
+        'requestHeaders': <String, String>{'x-request': '1'},
+        'statusCode': 200,
+        'responseHeaders': <String, String>{
+          'Content-Type': 'application/json; charset=utf-8',
+          'Content-Length': '3',
+        },
+        'reasonPhrase': 'OK',
+      },
+    });
+    await _flushAsyncEvents();
+
+    expect(capturedRequest?.method, 'POST');
+    expect(capturedRequest?.headers['x-request'], '1');
+    expect(
+      capturedRequest?.contentAccess,
+      WebResourceContentAccess.unsupported,
+    );
+    expect(responseRequest?.method, 'POST');
+    expect(capturedResponse?.statusCode, 200);
+    expect(capturedResponse?.mimeType, 'application/json');
+    expect(capturedResponse?.contentLength, 3);
+    expect(capturedResponse?.contentAccess, WebResourceContentAccess.onDemand);
+  });
+
+  test('Windows raw response content is lazy and memoized', () async {
+    var getContentCalls = 0;
+    final WindowsRawWebResourceResponse response =
+        WindowsRawWebResourceResponse(
+          uri: Uri.parse('https://example.test/api'),
+          statusCode: 200,
+          headers: const <String, String>{},
+          reasonPhrase: 'OK',
+          mimeType: 'application/octet-stream',
+          contentLength: 3,
+          getContent: () async {
+            getContentCalls += 1;
+            return Uint8List.fromList(<int>[1, 2, 3]);
+          },
+        );
+
+    expect(getContentCalls, 0);
+    expect(await response.getContent(), <int>[1, 2, 3]);
+    expect(await response.getContent(), <int>[1, 2, 3]);
+    expect(getContentCalls, 1);
   });
 
   test('registerWith sets the Windows WebView platform implementation', () {
@@ -518,6 +599,8 @@ void main() {
       controller.onDownloadEvent.drain<void>(),
       controller.onLoadError.drain<void>(),
       controller.httpResponseError.drain<void>(),
+      controller.rawWebResourceRequest.drain<void>(),
+      controller.rawWebResourceResponse.drain<void>(),
       controller.historyChanged.drain<void>(),
       controller.securityStateChanged.drain<void>(),
       controller.title.drain<void>(),
