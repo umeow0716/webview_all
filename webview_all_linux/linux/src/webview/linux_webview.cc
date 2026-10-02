@@ -35,6 +35,61 @@ typedef struct {
 constexpr guint kPendingRequestTimeoutSeconds = 30;
 constexpr guint kMaxCapturedWebResources = 256;
 
+static gboolean environment_flag_enabled(const gchar *name) {
+  const gchar *value = g_getenv(name);
+  if (value == nullptr || *value == '\0') {
+    return FALSE;
+  }
+  return g_ascii_strcasecmp(value, "0") != 0 &&
+         g_ascii_strcasecmp(value, "false") != 0 &&
+         g_ascii_strcasecmp(value, "off") != 0 &&
+         g_ascii_strcasecmp(value, "no") != 0;
+}
+
+static gboolean has_nvidia_proprietary_driver() {
+  return g_file_test("/proc/driver/nvidia/version", G_FILE_TEST_IS_REGULAR) ||
+         g_file_test("/sys/module/nvidia/version", G_FILE_TEST_IS_REGULAR);
+}
+
+static void apply_webkitgtk_252_dmabuf_workaround() {
+  static gsize initialized = 0;
+  if (!g_once_init_enter(&initialized)) {
+    return;
+  }
+
+  const guint major = webkit_get_major_version();
+  const guint minor = webkit_get_minor_version();
+  const guint micro = webkit_get_micro_version();
+  const gboolean vulnerable_version = major == 2 && minor == 52;
+  const gboolean disable_dmabuf_requested =
+      environment_flag_enabled("WEBKIT_DISABLE_DMABUF_RENDERER");
+  const gboolean nvidia_proprietary = has_nvidia_proprietary_driver();
+
+  if (vulnerable_version &&
+      (nvidia_proprietary || disable_dmabuf_requested)) {
+    // Debian/Ubuntu WebKitGTK 2.52.x carries an NVIDIA workaround that can
+    // return an empty renderer transport-mode set before SharedMemory is
+    // enabled. The next accelerated-compositing IPC then dereferences a null
+    // AcceleratedBackingStore. WEBKIT_FORCE_DMABUF_RENDERER bypasses that
+    // downstream early return, while FORCE_SHM immediately selects the safe
+    // shared-memory transport without enabling hardware DMABUF import.
+    //
+    // WEBKIT_DISABLE_DMABUF_RENDERER has the same empty-mode failure on
+    // upstream 2.52.x, so replace it with the narrower SHM-only mode.
+    if (disable_dmabuf_requested) {
+      g_unsetenv("WEBKIT_DISABLE_DMABUF_RENDERER");
+    }
+    g_setenv("WEBKIT_FORCE_DMABUF_RENDERER", "1", TRUE);
+    g_setenv("WEBKIT_DMABUF_RENDERER_FORCE_SHM", "1", TRUE);
+    g_message("webview_all_linux: using WebKitGTK %u.%u.%u shared-memory "
+              "renderer workaround%s",
+              major, minor, micro,
+              nvidia_proprietary ? " for NVIDIA" : "");
+  }
+
+  g_once_init_leave(&initialized, 1);
+}
+
 static gint retain_captured_web_resource(LinuxWebView *webview,
                                          WebKitWebResource *resource) {
   gint capture_id = webview->next_web_resource_capture_id;
@@ -1106,6 +1161,8 @@ void destroy_linux_webview(gpointer data) {
 }
 
 LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self) {
+  apply_webkitgtk_252_dmabuf_workaround();
+
   LinuxWebView *webview = g_new0(LinuxWebView, 1);
   webview->plugin = self;
   webview->id = self->next_webview_id++;

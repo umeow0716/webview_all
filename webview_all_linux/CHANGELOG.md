@@ -1,5 +1,6 @@
 ## 1.4.4
 
+* Work around the WebKitGTK 2.52.x NVIDIA/DMABUF null backing-store crash by selecting the shared-memory renderer before creating the first Linux WebView.
 * Restore browser-like Linux popup/new-window behavior with related WebKitGTK views and native popup windows.
 * Preserve WebKitGTK default authentication and unsupported permission handling unless the application explicitly registers matching callbacks.
 * Harden Linux resource, download, popup, and JavaScript-bridge callback lifetimes, preserve native file-chooser fallback, and add WebProcess termination diagnostics.
