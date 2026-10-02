@@ -34,6 +34,7 @@ class LinuxRawWebResourceRequest extends RawWebResourceRequest {
     required super.uri,
     required super.method,
     required super.headers,
+    required super.headerState,
     required super.isForMainFrame,
   }) : super(contentAccess: WebResourceContentAccess.unsupported);
 

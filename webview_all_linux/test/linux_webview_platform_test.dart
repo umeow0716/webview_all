@@ -62,10 +62,18 @@ void main() {
     expect(capturedRequest?.headers['x-request'], '1');
     expect(capturedRequest?.isForMainFrame, isFalse);
     expect(
+      capturedRequest?.headerState,
+      WebResourceRequestHeaderState.provisional,
+    );
+    expect(
       capturedRequest?.contentAccess,
       WebResourceContentAccess.unsupported,
     );
     expect(responseRequest?.method, 'GET');
+    expect(
+      responseRequest?.headerState,
+      WebResourceRequestHeaderState.provisional,
+    );
     expect(capturedResponse?.statusCode, 200);
     expect(capturedResponse?.mimeType, 'application/json');
     expect(capturedResponse?.contentLength, 3);

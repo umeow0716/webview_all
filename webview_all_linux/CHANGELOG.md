@@ -1,6 +1,7 @@
 ## 1.4.4
 
 * Add opt-in raw request/response capture with lazy asynchronous response-body access.
+* Mark Linux captured request headers as provisional because WebKitGTK reports them before NetworkProcess/libsoup finalization.
 * Fix a certificate API deprecation warning when building for iOS and macOS.
 * Block HTTP resources on HTTPS pages by default on OHOS.
 

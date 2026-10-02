@@ -57,6 +57,7 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
                 uri: uri,
                 method: event['method'] as String?,
                 headers: _stringMapFromEvent(event['headers']),
+                headerState: WebResourceRequestHeaderState.provisional,
                 isForMainFrame: event['isForMainFrame'] as bool?,
               ),
             );
@@ -75,6 +76,7 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
                   uri: uri,
                   method: event['method'] as String?,
                   headers: _stringMapFromEvent(event['requestHeaders']),
+                  headerState: WebResourceRequestHeaderState.provisional,
                   isForMainFrame: event['isForMainFrame'] as bool?,
                 );
             final LinuxRawWebResourceResponse response =

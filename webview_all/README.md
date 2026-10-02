@@ -84,6 +84,13 @@ network stack, so it reports `WebResourceRequestHeaderState.provisional`. The
 request supplied to the raw-response callback comes from
 `WebResourceResponseReceived` and reports `WebResourceRequestHeaderState.committed`;
 use that request when the actual headers sent by WebView2 are required.
+On Linux, WebKitGTK exposes `WebKitWebResource::sent-request`, but WebKit emits
+that signal from `dispatchWillSendRequest` before the request enters the
+NetworkProcess. libsoup can still add or change transport headers afterwards,
+including cookies, authentication, and defaults such as `Accept`, so both raw
+callbacks report `WebResourceRequestHeaderState.provisional`. WebKitGTK does not
+currently expose a public committed-request snapshot equivalent to WebView2's
+response event request.
 Capture can be disabled at runtime with
 `setWebResourceCaptureEnabled(false)`; pending native content handles are then
 released. Pending lazy-content handles are bounded, so call `getContent()` from
