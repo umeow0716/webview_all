@@ -100,6 +100,56 @@ void main() {
     expect(getContentCalls, 1);
   });
 
+  test('reports Linux host compatibility diagnostics', () async {
+    final TestDefaultBinaryMessenger messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      const MethodChannel(linuxWebViewChannelPrefix),
+      (MethodCall call) async {
+        if (call.method != 'getHostCompatibility') {
+          return null;
+        }
+        return <String, Object?>{
+          'webKitGtkMajor': 2,
+          'webKitGtkMinor': 52,
+          'webKitGtkMicro': 6,
+          'nvidiaProprietaryDriverDetected': true,
+          'legacyDisableDmabufRendererRequested': false,
+          'requiresEarlyRendererWorkaround': true,
+          'earlyRendererWorkaroundActive': false,
+        };
+      },
+    );
+
+    final LinuxHostCompatibility compatibility =
+        await LinuxWebViewPlatform.getHostCompatibility();
+
+    expect(compatibility.webKitGtkVersion, '2.52.6');
+    expect(compatibility.nvidiaProprietaryDriverDetected, isTrue);
+    expect(compatibility.requiresEarlyRendererWorkaround, isTrue);
+    expect(compatibility.earlyRendererWorkaroundActive, isFalse);
+    expect(compatibility.hostInitializationRequired, isTrue);
+  });
+
+  test('Linux renderer workaround is host-initialized, not controller-initialized', () {
+    final String webViewSource = File(
+      'linux/src/webview/linux_webview.cc',
+    ).readAsStringSync();
+    final String publicHeader = File(
+      'linux/include/webview_all_linux/webview_all_linux_plugin.h',
+    ).readAsStringSync();
+
+    expect(webViewSource, isNot(contains('WEBKIT_FORCE_DMABUF_RENDERER')));
+    expect(
+      publicHeader,
+      contains('webview_all_linux_host_requires_early_renderer_workaround'),
+    );
+    expect(
+      publicHeader,
+      contains('webview_all_linux_host_apply_early_renderer_workaround'),
+    );
+  });
+
   test('registerWith sets the Linux WebView platform implementation', () {
     final WebViewPlatform? previousInstance = WebViewPlatform.instance;
     addTearDown(() {

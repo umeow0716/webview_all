@@ -1,4 +1,5 @@
 #include "plugin/webview_all_linux_plugin_private.h"
+#include "plugin/host_compatibility.h"
 #include "common/method_channel_utils.h"
 
 #include <gio/gio.h>
@@ -193,6 +194,31 @@ void root_method_call_cb(FlMethodChannel* channel,
   WebviewAllLinuxPlugin* self = static_cast<WebviewAllLinuxPlugin*>(user_data);
   const gchar* method = fl_method_call_get_name(method_call);
   FlValue* args = fl_method_call_get_args(method_call);
+
+  if (strcmp(method, "getHostCompatibility") == 0) {
+    const LinuxHostCompatibilityInfo info = get_linux_host_compatibility();
+    FlValue* value = fl_value_new_map();
+    fl_value_set_string_take(value, "webKitGtkMajor",
+                             fl_value_new_int(info.webkit_major));
+    fl_value_set_string_take(value, "webKitGtkMinor",
+                             fl_value_new_int(info.webkit_minor));
+    fl_value_set_string_take(value, "webKitGtkMicro",
+                             fl_value_new_int(info.webkit_micro));
+    fl_value_set_string_take(
+        value, "nvidiaProprietaryDriverDetected",
+        fl_value_new_bool(info.nvidia_proprietary_driver_detected));
+    fl_value_set_string_take(
+        value, "legacyDisableDmabufRendererRequested",
+        fl_value_new_bool(info.legacy_disable_dmabuf_renderer_requested));
+    fl_value_set_string_take(
+        value, "requiresEarlyRendererWorkaround",
+        fl_value_new_bool(info.requires_early_renderer_workaround));
+    fl_value_set_string_take(
+        value, "earlyRendererWorkaroundActive",
+        fl_value_new_bool(info.early_renderer_workaround_active));
+    respond(method_call, success_response(value));
+    return;
+  }
 
   if (strcmp(method, "createWebView") == 0) {
     LinuxWebView* webview = create_linux_webview(self);

@@ -1,6 +1,6 @@
 ## 1.4.4
 
-* 规避 WebKitGTK 2.52.x 在 NVIDIA／DMABUF 路径下可能产生空 backing store 的崩溃，在创建第一个 Linux WebView 前切换到 shared-memory renderer。
+* 将 WebKitGTK 2.52.x NVIDIA／DMABUF 空 backing store 的规避逻辑移到显式的 Host 早期初始化 API，并新增 Host 相容性诊断，方便确认当前环境是否需要且已启用该规避。
 * 恢复 Linux 上接近浏览器的弹窗／新窗口行为，使用 WebKitGTK related view 与原生 GTK 窗口承载 `window.open` 和 `target=_blank`。
 * 仅在应用实际注册对应回调时拦截认证、导航与媒体权限，未支持的权限继续交由 WebKitGTK 默认处理。
 * 加固 Linux resource、download、popup 与 JavaScript bridge 的回调生命周期，保留原生 file chooser 回退，并记录 WebProcess 异常终止原因。

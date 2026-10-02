@@ -13,6 +13,7 @@ add_library(${PLUGIN_NAME} SHARED
   "src/common/method_channel_utils.cc"
   "src/platform/flutter_view.cc"
   "src/plugin/webview_all_linux_plugin.cc"
+  "src/plugin/host_compatibility.cc"
   "src/plugin/root_channel.cc"
   "src/webview/linux_webview.cc"
   "src/webview/download_policy.cc"
