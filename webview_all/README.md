@@ -59,6 +59,12 @@ copying response bodies into Dart. Other platforms report
 if (controller.webResourceCaptureSupport ==
     WebResourceCaptureSupport.supported) {
   await controller.setOnRawWebResourceResponse((request, response) async {
+    // On Windows this request is the committed request, including headers the
+    // WebView2 network stack added after WebResourceRequested.
+    if (request.headerState == WebResourceRequestHeaderState.committed) {
+      final actualRequestHeaders = request.headers;
+    }
+
     if (response.mimeType == 'application/json') {
       final bytes = await response.getContent();
       // Decode only the responses your application actually needs.
@@ -72,6 +78,12 @@ if (controller.webResourceCaptureSupport ==
 `RawWebResourceResponse.getContent()` is asynchronous and on-demand. Request
 body access is currently reported as `WebResourceContentAccess.unsupported` so
 native request streams are never consumed as a side effect of observation.
+On Windows, the standalone raw-request callback is captured from
+`WebResourceRequested`, whose headers can still be supplemented by WebView2's
+network stack, so it reports `WebResourceRequestHeaderState.provisional`. The
+request supplied to the raw-response callback comes from
+`WebResourceResponseReceived` and reports `WebResourceRequestHeaderState.committed`;
+use that request when the actual headers sent by WebView2 are required.
 Capture can be disabled at runtime with
 `setWebResourceCaptureEnabled(false)`; pending native content handles are then
 released. Pending lazy-content handles are bounded, so call `getContent()` from

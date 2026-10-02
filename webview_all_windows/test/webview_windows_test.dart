@@ -80,10 +80,18 @@ void main() {
     expect(capturedRequest?.method, 'POST');
     expect(capturedRequest?.headers['x-request'], '1');
     expect(
+      capturedRequest?.headerState,
+      WebResourceRequestHeaderState.provisional,
+    );
+    expect(
       capturedRequest?.contentAccess,
       WebResourceContentAccess.unsupported,
     );
     expect(responseRequest?.method, 'POST');
+    expect(
+      responseRequest?.headerState,
+      WebResourceRequestHeaderState.committed,
+    );
     expect(capturedResponse?.statusCode, 200);
     expect(capturedResponse?.mimeType, 'application/json');
     expect(capturedResponse?.contentLength, 3);

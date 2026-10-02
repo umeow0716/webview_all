@@ -662,6 +662,9 @@ void Webview::RegisterEventHandlers() {
                 return S_OK;
               }
 
+              // WebView2 reports this request as committed, including headers
+              // added by the network stack after WebResourceRequested.
+
               const auto raw_request = ReadRawWebResourceRequest(request.get());
               if (!raw_request.has_value()) {
                 return S_OK;

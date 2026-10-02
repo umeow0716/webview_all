@@ -39,6 +39,7 @@ void main() {
       main_file.RawWebResourceResponseCallback;
       main_file.WebResourceCaptureSupport;
       main_file.WebResourceContentAccess;
+      main_file.WebResourceRequestHeaderState;
       main_file.WebResourceRequest;
       main_file.WebResourceResponse;
       main_file.WebResourceError;

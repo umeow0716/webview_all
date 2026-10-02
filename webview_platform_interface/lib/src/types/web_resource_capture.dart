@@ -27,6 +27,21 @@ enum WebResourceContentAccess {
   onDemand,
 }
 
+/// Describes whether captured request headers are final for network delivery.
+enum WebResourceRequestHeaderState {
+  /// The native WebView API does not document whether later headers can be
+  /// added after this snapshot.
+  unknown,
+
+  /// The headers were captured before the native network stack finalized the
+  /// request and may omit headers added later, such as authentication headers.
+  provisional,
+
+  /// The headers represent the committed request after native network-stack
+  /// additions.
+  committed,
+}
+
 /// A captured request emitted directly from the platform WebView network API.
 ///
 /// Metadata is delivered eagerly. [getContent] is intentionally lazy so the
@@ -39,6 +54,7 @@ abstract class RawWebResourceRequest extends WebResourceRequest {
     required this.method,
     required this.headers,
     required this.contentAccess,
+    this.headerState = WebResourceRequestHeaderState.unknown,
     this.isForMainFrame,
   });
 
@@ -47,6 +63,13 @@ abstract class RawWebResourceRequest extends WebResourceRequest {
 
   /// HTTP headers reported by the native WebView.
   final Map<String, String> headers;
+
+  /// Whether [headers] are provisional or represent the committed request.
+  ///
+  /// For example, WebView2's `WebResourceRequested` request can be missing
+  /// headers that its network stack adds later. The request paired with
+  /// `WebResourceResponseReceived` is committed and includes those additions.
+  final WebResourceRequestHeaderState headerState;
 
   /// Whether this request belongs to the main frame, when the native API
   /// exposes that information.
@@ -97,14 +120,18 @@ abstract class RawWebResourceResponse extends WebResourceResponse {
   Future<Uint8List?> getContent();
 }
 
-/// Called when the native WebView is about to send a captured request.
+/// Called when the native WebView reports a captured request.
+///
+/// Check [RawWebResourceRequest.headerState] before treating
+/// [RawWebResourceRequest.headers] as the final headers sent over the network.
 typedef RawWebResourceRequestCallback =
     void Function(RawWebResourceRequest request);
 
 /// Called when the native WebView receives a captured response.
 ///
 /// [request] is the request associated with [response] as reported by the
-/// native WebView.
+/// native WebView. Platforms that expose the committed request should report
+/// [WebResourceRequestHeaderState.committed].
 typedef RawWebResourceResponseCallback =
     void Function(
       RawWebResourceRequest request,

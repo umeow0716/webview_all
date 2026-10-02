@@ -695,6 +695,7 @@ class WindowsWebViewController extends PlatformWebViewController {
         uri: uri,
         method: request.method,
         headers: request.headers,
+        headerState: WebResourceRequestHeaderState.provisional,
       ),
     );
   }
@@ -711,6 +712,7 @@ class WindowsWebViewController extends PlatformWebViewController {
       uri: uri,
       method: response.method,
       headers: response.requestHeaders,
+      headerState: WebResourceRequestHeaderState.committed,
     );
     callback(
       request,
@@ -2336,12 +2338,13 @@ class WindowsPlatformSslAuthError extends PlatformSslAuthError {
   }
 }
 
-/// Raw WebView2 request metadata captured from WebResourceRequested.
+/// Raw WebView2 request metadata captured from WebView2 network events.
 class WindowsRawWebResourceRequest extends RawWebResourceRequest {
   WindowsRawWebResourceRequest({
     required super.uri,
     required super.method,
     required super.headers,
+    required super.headerState,
   }) : super(
          isForMainFrame: null,
          contentAccess: WebResourceContentAccess.unsupported,

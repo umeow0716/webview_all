@@ -2,6 +2,7 @@
 
 * Update the WebView2 SDK baseline to 1.0.2365.46 for request-source-aware resource filters, with runtime fallback for older WebView2 installations.
 * Add opt-in raw request/response capture with lazy asynchronous response-body access.
+* Distinguish provisional `WebResourceRequested` headers from committed request headers reported with `WebResourceResponseReceived`.
 * Fix a certificate API deprecation warning when building for iOS and macOS.
 * Block HTTP resources on HTTPS pages by default on OHOS.
 * Preserve page-initiated Windows HTTP(S) navigation requests while awaiting navigation-delegate decisions, including POST bodies, request headers, cookies, redirect methods, and browser history semantics.

@@ -1,6 +1,7 @@
 ## 1.4.4
 
 * Add raw web-resource capture APIs, including platform support reporting and lazy response-body access.
+* Expose whether captured request headers are provisional, committed, or of unknown finality.
 * Fix a certificate API deprecation warning when building for iOS and macOS.
 * Block HTTP resources on HTTPS pages by default on OHOS.
 
