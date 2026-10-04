@@ -3,6 +3,8 @@
 #include "plugin/webview_all_linux_plugin_private.h"
 #include "webview/webview_internal.h"
 
+constexpr GConnectFlags kConnectDefaultFlags = static_cast<GConnectFlags>(0);
+
 DownloadPolicy::DownloadPolicy(LinuxWebView *webview) : webview_(webview) {
   signal_id_ = g_signal_connect(webkit_web_view_get_context(webview_->web_view),
                                 "download-started",
@@ -54,7 +56,7 @@ void DownloadPolicy::OnDownloadStarted(WebKitWebContext *context,
   // the native LinuxWebView state can be freed.
   g_signal_connect_object(download, "decide-destination",
                           G_CALLBACK(OnDecideDestination),
-                          policy->webview_->web_view, G_CONNECT_DEFAULT);
+                          policy->webview_->web_view, kConnectDefaultFlags);
 }
 
 gboolean DownloadPolicy::OnDecideDestination(WebKitDownload *download,

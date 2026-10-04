@@ -10,6 +10,7 @@
 
 constexpr const gchar *kResourceRequestDetailsKey =
     "webview_all_linux_request_details";
+constexpr GConnectFlags kConnectDefaultFlags = static_cast<GConnectFlags>(0);
 
 typedef struct {
   gchar *method;
@@ -380,21 +381,21 @@ create_web_view_cb(WebKitWebView *widget,
   gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(popup));
   g_signal_connect_object(popup, "ready-to-show",
                           G_CALLBACK(popup_web_view_ready_to_show_cb),
-                          window_widget, G_CONNECT_DEFAULT);
+                          window_widget, kConnectDefaultFlags);
   g_signal_connect_object(popup, "notify::title",
                           G_CALLBACK(popup_web_view_title_changed_cb),
-                          window_widget, G_CONNECT_DEFAULT);
+                          window_widget, kConnectDefaultFlags);
   g_signal_connect_object(popup, "close", G_CALLBACK(popup_web_view_close_cb),
-                          window_widget, G_CONNECT_DEFAULT);
+                          window_widget, kConnectDefaultFlags);
   g_signal_connect_object(popup, "run-as-modal",
                           G_CALLBACK(popup_web_view_run_as_modal_cb),
-                          window_widget, G_CONNECT_DEFAULT);
+                          window_widget, kConnectDefaultFlags);
   g_signal_connect(popup, "create", G_CALLBACK(create_web_view_cb), webview);
   g_signal_connect(popup, "web-process-terminated",
                    G_CALLBACK(web_process_terminated_cb), webview);
   g_signal_connect_object(window_widget, "delete-event",
                           G_CALLBACK(popup_window_delete_event_cb), popup,
-                          G_CONNECT_DEFAULT);
+                          kConnectDefaultFlags);
   return popup;
 }
 
@@ -726,10 +727,10 @@ static void resource_load_started_cb(WebKitWebView *widget,
 
   g_signal_connect_object(resource, "sent-request",
                           G_CALLBACK(resource_sent_request_cb), widget,
-                          G_CONNECT_DEFAULT);
+                          kConnectDefaultFlags);
   g_signal_connect_object(resource, "notify::response",
                           G_CALLBACK(resource_response_cb), widget,
-                          G_CONNECT_DEFAULT);
+                          kConnectDefaultFlags);
 }
 
 static gboolean authenticate_cb(WebKitWebView *widget,
@@ -1192,17 +1193,17 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self) {
       webview->content_manager,
       "script-message-received::__webview_all_console",
       G_CALLBACK(console_message_received_cb), webview->web_view,
-      G_CONNECT_DEFAULT);
+      kConnectDefaultFlags);
   g_signal_connect_object(
       webview->content_manager,
       "script-message-received::__webview_all_scroll",
       G_CALLBACK(scroll_message_received_cb), webview->web_view,
-      G_CONNECT_DEFAULT);
+      kConnectDefaultFlags);
   g_signal_connect_object(
       webview->content_manager,
       "script-message-received::__webview_all_async_javascript",
       G_CALLBACK(async_javascript_message_received_cb), webview->web_view,
-      G_CONNECT_DEFAULT);
+      kConnectDefaultFlags);
 
   rebuild_user_scripts(webview);
 
