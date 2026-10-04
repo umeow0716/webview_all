@@ -177,6 +177,40 @@ WebviewBridge::WebviewBridge(flutter::BinaryMessenger *messenger,
           return;
         }
 
+        if (call.method_name() == "setSurfaceOffset") {
+          double x = 0.0;
+          double y = 0.0;
+          bool valid = false;
+          if (arguments != nullptr) {
+            const auto x_it = arguments->find(flutter::EncodableValue("x"));
+            const auto y_it = arguments->find(flutter::EncodableValue("y"));
+            if (x_it != arguments->end() && y_it != arguments->end()) {
+              const auto x_value = std::get_if<double>(&x_it->second);
+              const auto y_value = std::get_if<double>(&y_it->second);
+              if (x_value != nullptr && y_value != nullptr) {
+                x = *x_value;
+                y = *y_value;
+                valid = std::isfinite(x) && std::isfinite(y);
+              }
+            }
+          }
+          if (!valid) {
+            result->Error("invalid_surface_offset",
+                          "The WebView surface offset is invalid.");
+            return;
+          }
+          const HRESULT offset_result = webview_->SetSurfaceOffset(x, y);
+          if (SUCCEEDED(offset_result)) {
+            result->Success();
+          } else {
+            result->Error("webview_surface_offset_failed",
+                          "Updating the WebView2 surface offset failed.",
+                          flutter::EncodableValue(
+                              static_cast<int64_t>(offset_result)));
+          }
+          return;
+        }
+
         if (call.method_name() == "getWebResourceResponseContent") {
           int64_t capture_id = -1;
           if (arguments != nullptr) {

@@ -1386,6 +1386,25 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     return _hostApi.setScrollDelta(_textureId, WindowsPointData(x: dx, y: dy));
   }
 
+  Future<bool> _setSurfaceOffset(Offset offset) async {
+    if (_isDisposed || _renderingError.value != null) {
+      return false;
+    }
+    assert(value.isInitialized);
+    try {
+      await _methodChannel.invokeMethod<void>(
+        'setSurfaceOffset',
+        <String, double>{'x': offset.dx, 'y': offset.dy},
+      );
+      return true;
+    } catch (error) {
+      debugPrint(
+        'webview_all_windows: failed to update WebView2 popup anchor: $error',
+      );
+      return false;
+    }
+  }
+
   /// Sets the surface size to the provided [size].
   Future<void> _setSize(Size size, double scaleFactor) async {
     if (_isDisposed || _renderingError.value != null) {
@@ -1513,6 +1532,9 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
   bool _surfaceAttached = false;
   bool _visibilityCheckScheduled = false;
   bool _surfaceSizeReportScheduled = false;
+  Size? _lastReportedSurfaceSize;
+  Offset? _lastReportedSurfaceOffset;
+  double? _lastReportedScaleFactor;
   bool _renderingRetryInProgress = false;
 
   @override
@@ -1640,6 +1662,9 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
       unawaited(_cursorSubscription?.cancel());
       _cursorSubscription = null;
       _surfaceSizeGeneration += 1;
+      _lastReportedSurfaceSize = null;
+      _lastReportedSurfaceOffset = null;
+      _lastReportedScaleFactor = null;
       _subscribeToCursor();
       _controller._renderingError.addListener(_handleRenderingErrorChanged);
     }
@@ -1673,6 +1698,7 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
       context.findRenderObject()?.markNeedsPaint();
       WidgetsBinding.instance.ensureVisualUpdate();
       _scheduleVisibilityCheck();
+      _scheduleSurfaceSizeReport();
     }
     _syncSurfaceAttachment();
   }
@@ -1800,6 +1826,10 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
                       );
                       return;
                     }
+                    // A hover/move event is not guaranteed immediately before
+                    // a press. Give WebView2 the exact press location before the
+                    // button event so native controls receive a coherent click.
+                    _controller._setCursorPos(ev.localPosition);
                     final button = getButton(ev.buttons);
                     _downButtons[ev.pointer] = button;
                     _controller._setPointerButtonState(button, true);
@@ -1816,6 +1846,7 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
                       );
                       return;
                     }
+                    _controller._setCursorPos(ev.localPosition);
                     final button = _downButtons.remove(ev.pointer);
                     if (button != null) {
                       _controller._setPointerButtonState(button, false);
@@ -1880,6 +1911,9 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
     });
     await _controller._retryRendering();
     if (mounted && _controller._renderingError.value == null) {
+      _lastReportedSurfaceSize = null;
+      _lastReportedSurfaceOffset = null;
+      _lastReportedScaleFactor = null;
       await _reportSurfaceSize();
     }
     if (mounted) {
@@ -1890,26 +1924,25 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
   }
 
   void _scheduleSurfaceSizeReport() {
-    if (_surfaceSizeReportScheduled) {
+    if (_surfaceSizeReportScheduled || !mounted || !_applicationVisible) {
       return;
     }
     _surfaceSizeReportScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((Duration _) {
       _surfaceSizeReportScheduled = false;
-      if (mounted) {
-        unawaited(_reportSurfaceSize());
+      if (!mounted || !_applicationVisible) {
+        return;
       }
+      unawaited(_reportSurfaceSize());
+      // A post-frame callback does not request a new frame. Keeping one armed
+      // lets us observe scrolling/animations when Flutter already produces a
+      // frame, while an idle WebView has no polling cost.
+      _scheduleSurfaceSizeReport();
     });
   }
 
   Future<void> _reportSurfaceSize() async {
     final int generation = ++_surfaceSizeGeneration;
-    final BuildContext? initialContext = _key.currentContext;
-    final RenderBox? box = initialContext?.findRenderObject() as RenderBox?;
-    if (box == null || !box.hasSize) {
-      return;
-    }
-    final Size size = box.size;
 
     try {
       await _controller.ready;
@@ -1920,9 +1953,44 @@ class _WebviewState extends State<Webview> with WidgetsBindingObserver {
       if (currentContext == null) {
         return;
       }
+      final RenderObject? renderObject = currentContext.findRenderObject();
+      if (renderObject is! RenderBox || !renderObject.hasSize) {
+        return;
+      }
+      final RenderBox box = renderObject;
+      final Size size = box.size;
+      final Offset offset = box.localToGlobal(Offset.zero);
+      if (!offset.dx.isFinite || !offset.dy.isFinite) {
+        return;
+      }
       final double scaleFactor =
           widget.scaleFactor ?? View.of(currentContext).devicePixelRatio;
-      await _controller._setSize(size, scaleFactor);
+      final bool extentChanged = _lastReportedSurfaceSize != size ||
+          _lastReportedScaleFactor != scaleFactor;
+      final bool offsetChanged = _lastReportedSurfaceOffset != offset ||
+          _lastReportedScaleFactor != scaleFactor;
+      if (!extentChanged && !offsetChanged) {
+        return;
+      }
+
+      if (extentChanged) {
+        await _controller._setSize(size, scaleFactor);
+        if (_controller._renderingError.value != null) {
+          return;
+        }
+      }
+      if (!mounted || generation != _surfaceSizeGeneration) {
+        return;
+      }
+      if (!await _controller._setSurfaceOffset(offset)) {
+        return;
+      }
+      if (!mounted || generation != _surfaceSizeGeneration) {
+        return;
+      }
+      _lastReportedSurfaceSize = size;
+      _lastReportedSurfaceOffset = offset;
+      _lastReportedScaleFactor = scaleFactor;
     } catch (_) {}
   }
 

@@ -315,6 +315,10 @@ Webview::Webview(
 
 Webview::~Webview() {
   InvalidatePendingNavigationRequests();
+  if (owns_mouse_capture_ && ::GetCapture() == parent_window_) {
+    ::ReleaseCapture();
+  }
+  owns_mouse_capture_ = false;
   lifetime_state_->owner = nullptr;
   navigation_requested_callback_ = nullptr;
   download_event_callback_ = nullptr;
@@ -1256,9 +1260,51 @@ Webview::CalculateOffscreenBounds(size_t width, size_t height,
       static_cast<LONG>(offscreen_right), static_cast<LONG>(offscreen_bottom)};
 }
 
+std::optional<RECT> Webview::CalculateAnchoredBounds(
+    size_t width, size_t height, float scale_factor, double offset_x,
+    double offset_y) const {
+  if (width == 0 || height == 0 || !std::isfinite(scale_factor) ||
+      scale_factor <= 0.0f || !std::isfinite(offset_x) ||
+      !std::isfinite(offset_y)) {
+    return std::nullopt;
+  }
+
+  const long double scaled_width =
+      std::ceil(static_cast<long double>(width) * scale_factor);
+  const long double scaled_height =
+      std::ceil(static_cast<long double>(height) * scale_factor);
+  const long double left =
+      std::round(static_cast<long double>(offset_x) * scale_factor);
+  const long double top =
+      std::round(static_cast<long double>(offset_y) * scale_factor);
+  const long double right = left + scaled_width;
+  const long double bottom = top + scaled_height;
+
+  if (scaled_width <= 0 || scaled_height <= 0 ||
+      scaled_width > kMaximumSurfaceDimension ||
+      scaled_height > kMaximumSurfaceDimension ||
+      left < (std::numeric_limits<LONG>::min)() ||
+      left > (std::numeric_limits<LONG>::max)() ||
+      top < (std::numeric_limits<LONG>::min)() ||
+      top > (std::numeric_limits<LONG>::max)() ||
+      right < (std::numeric_limits<LONG>::min)() ||
+      right > (std::numeric_limits<LONG>::max)() ||
+      bottom < (std::numeric_limits<LONG>::min)() ||
+      bottom > (std::numeric_limits<LONG>::max)()) {
+    return std::nullopt;
+  }
+
+  return RECT{static_cast<LONG>(left), static_cast<LONG>(top),
+              static_cast<LONG>(right), static_cast<LONG>(bottom)};
+}
+
 bool Webview::UpdateControllerBounds(size_t width, size_t height,
                                      float scale_factor) {
-  const auto bounds = CalculateOffscreenBounds(width, height, scale_factor);
+  const auto bounds = surface_geometry_anchored_
+                          ? CalculateAnchoredBounds(
+                                width, height, scale_factor, surface_offset_x_,
+                                surface_offset_y_)
+                          : CalculateOffscreenBounds(width, height, scale_factor);
   if (!bounds || !webview_controller_ ||
       FAILED(webview_controller_->put_RasterizationScale(scale_factor)) ||
       FAILED(webview_controller_->put_Bounds(*bounds))) {
@@ -1277,13 +1323,21 @@ HRESULT Webview::SetSurfaceSize(size_t width, size_t height,
     return E_UNEXPECTED;
   }
 
-  const auto bounds = CalculateOffscreenBounds(width, height, scale_factor);
+  const auto bounds = surface_geometry_anchored_
+                          ? CalculateAnchoredBounds(
+                                width, height, scale_factor, surface_offset_x_,
+                                surface_offset_y_)
+                          : CalculateOffscreenBounds(width, height, scale_factor);
   if (!bounds) {
     return E_INVALIDARG;
   }
 
-  const float scaled_width = static_cast<float>(bounds->right - bounds->left);
-  const float scaled_height = static_cast<float>(bounds->bottom - bounds->top);
+  const float scaled_width =
+      static_cast<float>(std::ceil(static_cast<long double>(width) *
+                                   scale_factor));
+  const float scaled_height =
+      static_cast<float>(std::ceil(static_cast<long double>(height) *
+                                   scale_factor));
   HRESULT result = webview_controller_->put_RasterizationScale(scale_factor);
   if (FAILED(result)) {
     return result;
@@ -1303,11 +1357,38 @@ HRESULT Webview::SetSurfaceSize(size_t width, size_t height,
   return S_OK;
 }
 
+HRESULT Webview::SetSurfaceOffset(double offset_x, double offset_y) {
+  if (!IsValid() || !webview_controller_ || !std::isfinite(offset_x) ||
+      !std::isfinite(offset_y)) {
+    return E_INVALIDARG;
+  }
+
+  const auto bounds = CalculateAnchoredBounds(
+      surface_width_, surface_height_, scale_factor_, offset_x, offset_y);
+  if (!bounds) {
+    return E_INVALIDARG;
+  }
+
+  const HRESULT result = webview_controller_->put_Bounds(*bounds);
+  if (FAILED(result)) {
+    return result;
+  }
+
+  surface_offset_x_ = offset_x;
+  surface_offset_y_ = offset_y;
+  surface_geometry_anchored_ = true;
+  return S_OK;
+}
+
 HRESULT Webview::SetVisible(bool visible) {
   if (!IsValid() || !webview_controller_) {
     return E_UNEXPECTED;
   }
   if (!visible) {
+    if (owns_mouse_capture_ && ::GetCapture() == parent_window_) {
+      ::ReleaseCapture();
+    }
+    owns_mouse_capture_ = false;
     SetFocus(false, COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
   }
   return webview_controller_->put_IsVisible(visible ? TRUE : FALSE);
@@ -1931,9 +2012,12 @@ void Webview::SetCursorLeave() {
   if (!IsValid()) {
     return;
   }
+  // WebView2 requires zeroed key/data/point values for LEAVE. Keeping the
+  // last pressed-button state here can make Chromium believe a press is still
+  // active and interfere with native popups such as <select>.
   composition_controller_->SendMouseInput(
-      COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE, virtual_keys_.state(), 0,
-      last_cursor_pos_);
+      COREWEBVIEW2_MOUSE_EVENT_KIND_LEAVE,
+      COREWEBVIEW2_MOUSE_EVENT_VIRTUAL_KEYS_NONE, 0, POINT{0, 0});
 }
 
 void Webview::SetPointerUpdate(int32_t pointer,
@@ -2011,6 +2095,20 @@ void Webview::SetPointerButtonState(WebviewPointerButton button, bool is_down) {
 
   if (is_down) {
     SetFocus(true, COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+    if (parent_window_ != nullptr && IsWindow(parent_window_)) {
+      if (::GetCapture() != parent_window_) {
+        ::SetCapture(parent_window_);
+      }
+      owns_mouse_capture_ = ::GetCapture() == parent_window_;
+    }
+  } else {
+    // Match Microsoft's composition-hosting sample: release capture before
+    // forwarding the button-up event so WebView2 may transfer interaction to
+    // a native popup window (for example an HTML <select> dropdown).
+    if (owns_mouse_capture_ && ::GetCapture() == parent_window_) {
+      ::ReleaseCapture();
+    }
+    owns_mouse_capture_ = false;
   }
 
   bool is_double_click = false;

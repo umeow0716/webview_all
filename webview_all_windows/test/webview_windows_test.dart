@@ -854,6 +854,41 @@ void main() {
     await tester.pump();
   });
 
+  _widgetTest('native surface reports its window-relative offset', (
+    WidgetTester tester,
+  ) async {
+    final List<Offset> offsets = <Offset>[];
+    _mockWindowsWebViewCreation(onSetSurfaceOffset: offsets.add);
+    final native_webview.WebviewController controller =
+        _createNativeController();
+    await controller.initialize();
+
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Stack(
+          children: <Widget>[
+            Positioned(
+              left: 37,
+              top: 53,
+              width: 320,
+              height: 240,
+              child: native_webview.Webview(controller, scaleFactor: 1),
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(offsets, isNotEmpty);
+    expect(offsets.last, const Offset(37, 53));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   _widgetTest('native surface follows device-pixel-ratio changes', (
     WidgetTester tester,
   ) async {
@@ -2707,6 +2742,7 @@ void _mockWindowsWebViewCreation({
   FutureOr<void> Function(bool enabled)? onSetDownloadsEnabled,
   void Function(bool enabled)? onSetNavigationRequestCallbacksEnabled,
   void Function(WindowsSizeData size)? onSetSize,
+  void Function(Offset offset)? onSetSurfaceOffset,
   int setSizeFailureCount = 0,
   void Function(bool attached)? onSetSurfaceAttached,
   void Function(bool focused, int reason)? onSetFocus,
@@ -2980,6 +3016,18 @@ void _mockWindowsWebViewCreation({
   });
 
   messenger.setMockMethodCallHandler(
+    MethodChannel('$windowsWebViewChannelPrefix/$_activeMockTextureId'),
+    (MethodCall methodCall) async {
+      if (methodCall.method == 'setSurfaceOffset') {
+        final args = methodCall.arguments! as Map<dynamic, dynamic>;
+        onSetSurfaceOffset?.call(
+          Offset(args['x']! as double, args['y']! as double),
+        );
+      }
+      return null;
+    },
+  );
+  messenger.setMockMethodCallHandler(
     MethodChannel('$windowsWebViewChannelPrefix/$_activeMockTextureId/events'),
     (MethodCall methodCall) async => null,
   );
@@ -3056,6 +3104,10 @@ void _clearWindowsWebViewCreationMock() {
   messenger.setMockMessageHandler(_hostApiChannel('setSurfaceAttached'), null);
   messenger.setMockMessageHandler(_hostApiChannel('setFocus'), null);
   messenger.setMockMessageHandler(_hostApiChannel('disposeWebView'), null);
+  messenger.setMockMethodCallHandler(
+    MethodChannel('$windowsWebViewChannelPrefix/$_activeMockTextureId'),
+    null,
+  );
   messenger.setMockMethodCallHandler(
     MethodChannel('$windowsWebViewChannelPrefix/$_activeMockTextureId/events'),
     null,

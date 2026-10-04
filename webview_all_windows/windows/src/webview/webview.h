@@ -258,6 +258,7 @@ public:
   bool IsValid() { return is_valid_; }
 
   HRESULT SetSurfaceSize(size_t width, size_t height, float scale_factor);
+  HRESULT SetSurfaceOffset(double offset_x, double offset_y);
   HRESULT SetVisible(bool visible);
   HRESULT SetFocus(bool focused, COREWEBVIEW2_MOVE_FOCUS_REASON reason);
   void NotifyParentWindowPositionChanged();
@@ -425,6 +426,10 @@ private:
   float scale_factor_ = 1.0;
   size_t surface_width_ = 1280;
   size_t surface_height_ = 720;
+  double surface_offset_x_ = 0.0;
+  double surface_offset_y_ = 0.0;
+  bool surface_geometry_anchored_ = false;
+  bool owns_mouse_capture_ = false;
   wil::com_ptr<ICoreWebView2CompositionController> composition_controller_;
   wil::com_ptr<ICoreWebView2Controller3> webview_controller_;
   wil::com_ptr<ICoreWebView2> webview_;
@@ -503,6 +508,10 @@ private:
       winrt::com_ptr<ABI::Windows::UI::Composition::ICompositor> compositor);
   std::optional<RECT> CalculateOffscreenBounds(size_t width, size_t height,
                                                float scale_factor) const;
+  std::optional<RECT> CalculateAnchoredBounds(size_t width, size_t height,
+                                              float scale_factor,
+                                              double offset_x,
+                                              double offset_y) const;
   bool UpdateControllerBounds(size_t width, size_t height, float scale_factor);
   void RegisterEventHandlers();
   void InvalidatePendingNavigationRequests();
